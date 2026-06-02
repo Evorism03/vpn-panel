@@ -1,0 +1,26 @@
+services:
+  backend:
+    build: ./backend
+    container_name: vpn-panel-backend
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - vpn-panel-net
+
+  frontend:
+    build: ./frontend
+    container_name: vpn-panel-frontend
+    restart: unless-stopped
+    ports:
+      - "${PANEL_HTTP_BIND:-0.0.0.0}:${PANEL_HTTP_PORT:-8080}:80"
+    depends_on:
+      - backend
+    networks:
+      - vpn-panel-net
+
+networks:
+  vpn-panel-net:
+    driver: bridge

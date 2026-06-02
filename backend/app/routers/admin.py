@@ -1,0 +1,359 @@
+"""Admin API — requires JWT auth."""
+import json
+import secrets
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from ..auth import get_current_admin, hash_password, require_superadmin
+from ..database import Admin, AuditLog, Client, Order, get_db
+from ..services import awg as awg_svc
+from ..services.orders import (
+    create_client, delete_client_from_cfg,
+    enforce_expired, process_order, renew_client,
+)
+
+router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+def log(db: Session, action: str, entity_type: str, entity_id: str,
+        admin: Admin, details: dict = {}):
+    db.add(AuditLog(
+        action=action, entity_type=entity_type, entity_id=entity_id,
+        admin_id=admin.id, admin_username=admin.username,
+        details=json.dumps(details, ensure_ascii=False),
+    ))
+    db.commit()
+
+
+# ── Clients ────────────────────────────────────────────────────────────────────
+
+class ClientCreate(BaseModel):
+    name: str
+    term: str = "1m"
+    contact: str = ""
+    expires_at: Optional[str] = None
+
+
+class ClientUpdate(BaseModel):
+    name: Optional[str] = None
+    contact: Optional[str] = None
+
+
+class ClientRenew(BaseModel):
+    term: str = "1m"
+
+
+class ClientExpiry(BaseModel):
+    expires_at: Optional[str] = None
+
+
+@router.get("/clients")
+def list_clients(
+    status: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    enforce_expired(db)
+    q = db.query(Client)
+    if status:
+        q = q.filter(Client.status == status)
+    clients = q.order_by(Client.created_at.desc()).all()
+    return {"clients": [_client_dict(c) for c in clients]}
+
+
+@router.post("/clients")
+def add_client(
+    body: ClientCreate,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    result = create_client(db, body.name.strip(), body.term, body.contact, body.expires_at)
+    log(db, "client.create", "client", result["id"], admin,
+        {"name": body.name, "term": body.term})
+    return {"client": result}
+
+
+@router.patch("/clients/{client_id}")
+def update_client(
+    client_id: str,
+    body: ClientUpdate,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    client = db.query(Client).filter(Client.id == client_id).first()
+    if not client:
+        raise HTTPException(404, "Client not found")
+    if body.name is not None:
+        client.name = body.name.strip()
+    if body.contact is not None:
+        client.contact = body.contact.strip()
+    db.commit()
+    log(db, "client.update", "client", client_id, admin)
+    return {"client": _client_dict(client)}
+
+
+@router.delete("/clients/{client_id}")
+def delete_client(
+    client_id: str,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    client = db.query(Client).filter(Client.id == client_id).first()
+    if not client:
+        raise HTTPException(404, "Client not found")
+    delete_client_from_cfg(client.public_key)
+    log(db, "client.delete", "client", client_id, admin, {"name": client.name})
+    db.delete(client)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/clients/{client_id}/renew")
+def renew(
+    client_id: str,
+    body: ClientRenew,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    result = renew_client(db, client_id, body.term)
+    log(db, "client.renew", "client", client_id, admin, {"term": body.term})
+    return result
+
+
+@router.patch("/clients/{client_id}/expiry")
+def set_expiry(
+    client_id: str,
+    body: ClientExpiry,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    client = db.query(Client).filter(Client.id == client_id).first()
+    if not client:
+        raise HTTPException(404, "Client not found")
+    client.expires_at = body.expires_at
+    db.commit()
+    log(db, "client.set_expiry", "client", client_id, admin, {"expires_at": body.expires_at})
+    return {"client": _client_dict(client)}
+
+
+@router.get("/clients/{client_id}/config")
+def get_config(
+    client_id: str,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    client = db.query(Client).filter(Client.id == client_id).first()
+    if not client or not client.config_text:
+        raise HTTPException(404, "Config not found")
+    return {"config": client.config_text, "filename": f"{client.name or client_id}.conf"}
+
+
+# ── Orders ─────────────────────────────────────────────────────────────────────
+
+@router.get("/orders")
+def list_orders(
+    status: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    q = db.query(Order)
+    if status:
+        q = q.filter(Order.status == status)
+    orders = q.order_by(Order.created_at.desc()).all()
+    return {"orders": [_order_dict(o) for o in orders]}
+
+
+@router.post("/orders/{order_id}/process")
+def process_order_endpoint(
+    order_id: str,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+    if order.status == "issued":
+        raise HTTPException(400, "Order already issued")
+    updated = process_order(db, order)
+    db.commit()
+    log(db, "order.process", "order", order_id, admin, {"status": updated.status})
+    return {"order": _order_dict(updated)}
+
+
+@router.delete("/orders/{order_id}")
+def delete_order(
+    order_id: str,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(404, "Order not found")
+    db.delete(order)
+    db.commit()
+    log(db, "order.delete", "order", order_id, admin)
+    return {"ok": True}
+
+
+# ── Admins (superadmin only) ───────────────────────────────────────────────────
+
+class AdminCreate(BaseModel):
+    username: str
+    password: str
+    display_name: str = ""
+    role: str = "admin"
+
+
+class AdminUpdate(BaseModel):
+    display_name: Optional[str] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+@router.get("/admins")
+def list_admins(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_superadmin),
+):
+    admins = db.query(Admin).all()
+    return {"admins": [_admin_dict(a) for a in admins]}
+
+
+@router.post("/admins")
+def create_admin(
+    body: AdminCreate,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(require_superadmin),
+):
+    if db.query(Admin).filter(Admin.username == body.username).first():
+        raise HTTPException(400, "Username already exists")
+    new_admin = Admin(
+        id=secrets.token_hex(8),
+        username=body.username.strip(),
+        hashed_password=hash_password(body.password),
+        display_name=body.display_name.strip(),
+        role=body.role if body.role in ("superadmin", "admin") else "admin",
+    )
+    db.add(new_admin)
+    db.commit()
+    log(db, "admin.create", "admin", new_admin.id, admin, {"username": body.username})
+    return {"admin": _admin_dict(new_admin)}
+
+
+@router.patch("/admins/{admin_id}")
+def update_admin(
+    admin_id: str,
+    body: AdminUpdate,
+    db: Session = Depends(get_db),
+    current: Admin = Depends(require_superadmin),
+):
+    target = db.query(Admin).filter(Admin.id == admin_id).first()
+    if not target:
+        raise HTTPException(404, "Admin not found")
+    if body.display_name is not None:
+        target.display_name = body.display_name.strip()
+    if body.password:
+        target.hashed_password = hash_password(body.password)
+    if body.role in ("superadmin", "admin"):
+        target.role = body.role
+    if body.is_active is not None:
+        target.is_active = body.is_active
+    db.commit()
+    log(db, "admin.update", "admin", admin_id, current)
+    return {"admin": _admin_dict(target)}
+
+
+@router.delete("/admins/{admin_id}")
+def delete_admin(
+    admin_id: str,
+    db: Session = Depends(get_db),
+    current: Admin = Depends(require_superadmin),
+):
+    if admin_id == current.id:
+        raise HTTPException(400, "Cannot delete yourself")
+    target = db.query(Admin).filter(Admin.id == admin_id).first()
+    if not target:
+        raise HTTPException(404, "Admin not found")
+    db.delete(target)
+    db.commit()
+    return {"ok": True}
+
+
+# ── Audit log ──────────────────────────────────────────────────────────────────
+
+@router.get("/audit")
+def audit_log(
+    limit: int = Query(100, le=500),
+    offset: int = Query(0),
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    logs = (db.query(AuditLog)
+            .order_by(AuditLog.created_at.desc())
+            .offset(offset).limit(limit).all())
+    return {"logs": [_log_dict(l) for l in logs]}
+
+
+# ── Stats ──────────────────────────────────────────────────────────────────────
+
+@router.get("/stats")
+def stats(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    total   = db.query(Client).count()
+    active  = db.query(Client).filter(Client.status == "active").count()
+    expired = db.query(Client).filter(Client.status == "expired").count()
+    pending = db.query(Order).filter(Order.status == "pending").count()
+    issued  = db.query(Order).filter(Order.status == "issued").count()
+    dump    = awg_svc.awg_show_dump()
+    return {
+        "clients": {"total": total, "active": active, "expired": expired},
+        "orders":  {"pending": pending, "issued": issued},
+        "dump":    dump,
+    }
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _client_dict(c: Client) -> dict:
+    return {
+        "id": c.id, "name": c.name, "public_key": c.public_key,
+        "contact": c.contact, "server_id": c.server_id,
+        "status": c.status, "expires_at": c.expires_at,
+        "created_at": c.created_at, "blocked_at": c.blocked_at,
+    }
+
+
+def _order_dict(o: Order) -> dict:
+    return {
+        "id": o.id, "login": o.login, "email": o.email, "term": o.term,
+        "status": o.status, "type": o.type, "client_id": o.client_id,
+        "server_id": o.server_id, "expires_at": o.expires_at,
+        "invoice_id": o.invoice_id, "payment_amount": o.payment_amount,
+        "paid_at": o.paid_at, "processing_error": o.processing_error,
+        "created_at": o.created_at.isoformat() if o.created_at else None,
+        "processed_at": o.processed_at,
+    }
+
+
+def _admin_dict(a: Admin) -> dict:
+    return {
+        "id": a.id, "username": a.username, "display_name": a.display_name,
+        "role": a.role, "is_active": a.is_active,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+        "last_login": a.last_login.isoformat() if a.last_login else None,
+    }
+
+
+def _log_dict(l: AuditLog) -> dict:
+    return {
+        "id": l.id, "action": l.action, "entity_type": l.entity_type,
+        "entity_id": l.entity_id, "admin_username": l.admin_username,
+        "details": l.details,
+        "created_at": l.created_at.isoformat() if l.created_at else None,
+    }
