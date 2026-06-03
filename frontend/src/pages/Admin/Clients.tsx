@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Plus, Search, Download, Trash2, RefreshCw, MoreHorizontal } from "lucide-react";
+import { Plus, Search, Download, Trash2, RefreshCw } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { ru } from "date-fns/locale";
 import { Card } from "../../components/ui/Card";
 import { StatusBadge } from "../../components/ui/Badge";
 import { Spinner } from "../../components/ui/Spinner";
@@ -20,7 +19,7 @@ export default function Clients() {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
-  const [name, setName] = useState("");
+  const [clientName, setClientName] = useState("");
   const [contact, setContact] = useState("");
   const [term, setTerm] = useState("1m");
   const [creating, setCreating] = useState(false);
@@ -65,13 +64,13 @@ export default function Clients() {
   }
 
   async function createClient() {
-    if (!name.trim()) { setError("Введите имя"); return; }
+    if (!clientName.trim()) { setError("Введите имя"); return; }
     setError(""); setCreating(true);
     try {
-      await api.post("/admin/clients", { name: name.trim(), contact: contact.trim(), term });
+      await api.post("/admin/clients", { name: clientName.trim(), contact: contact.trim(), term });
       qc.invalidateQueries({ queryKey: ["clients"] });
       setCreateOpen(false);
-      setName(""); setContact(""); setTerm("1m");
+      setClientName(""); setContact(""); setTerm("1m");
     } catch (e: any) {
       setError(e.response?.data?.detail || "Ошибка");
     } finally {
@@ -181,7 +180,7 @@ export default function Clients() {
         <div className="space-y-3">
           <div>
             <label className="block text-xs text-slate-400 mb-1.5">Имя</label>
-            <input className="input" placeholder="Иван Иванов" value={name} onChange={e => setName(e.target.value)} />
+            <input className="input" placeholder="Иван Иванов" value={clientName} onChange={e => setClientName(e.target.value)} />
           </div>
           <div>
             <label className="block text-xs text-slate-400 mb-1.5">Контакт (email/telegram)</label>

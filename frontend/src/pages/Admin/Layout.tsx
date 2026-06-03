@@ -4,7 +4,7 @@ import { clsx } from "clsx";
 import { useSSE } from "../../hooks/useSSE";
 import {
   LayoutDashboard, Users, ShoppingCart, Settings,
-  LogOut, Shield, Menu, X, ClipboardList,
+  LogOut, Shield, Menu, ClipboardList,
 } from "lucide-react";
 import { useAuthStore } from "../../store/auth";
 

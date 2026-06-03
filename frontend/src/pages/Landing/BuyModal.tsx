@@ -19,7 +19,7 @@ export function BuyModal({ plan, onClose }: Props) {
   const [login, setLogin] = useState("");
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
-  const [orderId, setOrderId] = useState("");
+  const [_orderId, setOrderId] = useState("");
   const [payUrl, setPayUrl] = useState("");
   const navigate = useNavigate();
 

@@ -17,7 +17,7 @@ export default function Cabinet() {
   const [loginError, setLoginError] = useState("");
   const [qrConfig, setQrConfig] = useState<string | null>(null);
 
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ["portal-client", clientId],
     queryFn: async () => {
       const { data } = await api.get(`/portal/client/${clientId}`);
