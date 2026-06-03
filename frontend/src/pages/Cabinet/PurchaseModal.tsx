@@ -45,7 +45,10 @@ export function PurchaseModal({
 
   const paymentsEnabled = shopCfg?.payments_enabled ?? false;
   const rawPrices: Record<string, Plan> = shopCfg?.prices ?? {};
-  const plans: Plan[] = TERM_ORDER.filter(t => rawPrices[t]).map(t => rawPrices[t]);
+  // Include `term` key explicitly — rawPrices[t] only has {amount, label}
+  const plans: Plan[] = TERM_ORDER
+    .filter(t => rawPrices[t])
+    .map(t => ({ term: t, ...rawPrices[t] }));
 
   // Reset form when modal opens — keep term as-is so user doesn't lose selection
   useEffect(() => {
