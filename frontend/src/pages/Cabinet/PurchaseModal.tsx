@@ -33,44 +33,45 @@ export function PurchaseModal({
 }: Props) {
   const isRenewal = !!clientId;
 
-  const [step, setStep]             = useState<Step>("select");
-  const [selectedTerm, setTerm]     = useState("1m");
-  const [login, setLogin]           = useState("");
-  const [email, setEmail]           = useState(prefillEmail || "");
-  const [error, setError]           = useState("");
-  const [payUrl, setPayUrl]         = useState("");
-  const [newExpiry, setNewExpiry]   = useState("");
+  const [step, setStep]           = useState<Step>("select");
+  const [selectedTerm, setTerm]   = useState("1m");
+  const [initialized, setInit]    = useState(false);   // set term from server only once
+  const [login, setLogin]         = useState("");
+  const [email, setEmail]         = useState(prefillEmail || "");
+  const [error, setError]         = useState("");
+  const [payUrl, setPayUrl]       = useState("");
+  const [newExpiry, setNewExpiry] = useState("");
 
   const { data: shopCfg, isLoading: cfgLoading } = useQuery({
     queryKey: ["shop-config"],
     queryFn: async () => (await api.get("/shop/config")).data,
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,            // 5 min — no background refetch during session
+    refetchOnWindowFocus: false,
   });
 
-  const paymentsEnabled: boolean      = shopCfg?.payments_enabled ?? false;
+  const paymentsEnabled: boolean        = shopCfg?.payments_enabled ?? false;
   const rawPrices: Record<string, Plan> = shopCfg?.prices ?? {};
 
-  // Build plan list — fallback while loading, then real data
   const plans: Plan[] = cfgLoading
     ? FALLBACK_PLANS
-    : TERM_ORDER
-        .filter(t => rawPrices[t])
-        .map(t => rawPrices[t]);
+    : TERM_ORDER.filter(t => rawPrices[t]).map(t => rawPrices[t]);
 
-  // Pick first valid plan as default once data arrives
+  // Set default term ONCE when plans first load — never again
   useEffect(() => {
-    if (!cfgLoading && plans.length > 0) {
+    if (!cfgLoading && plans.length > 0 && !initialized) {
+      setInit(true);
       setTerm(t => plans.find(p => p.term === t) ? t : plans[0].term);
     }
-  }, [cfgLoading]);
+  }, [cfgLoading, initialized]);
 
-  // Reset state every time modal opens
+  // Reset on open (but keep selectedTerm — user may re-open same modal)
   useEffect(() => {
     if (open) {
       setStep("select");
       setError(""); setPayUrl(""); setNewExpiry("");
       setEmail(prefillEmail || "");
       setLogin("");
+      setInit(false);   // allow re-init when modal reopens
     }
   }, [open, prefillEmail]);
 
@@ -83,18 +84,19 @@ export function PurchaseModal({
   async function handleProceed() {
     setError("");
     if (!isRenewal) { setStep("form"); return; }
-    await doSubmit("", email);
+    await doSubmit("", email, selectedTerm);
   }
 
-  async function doSubmit(loginVal: string, emailVal: string) {
+  async function doSubmit(loginVal: string, emailVal: string, termOverride?: string) {
     if (!isRenewal && !loginVal.trim()) { setError("Введите имя"); return; }
     if (!isRenewal && !emailVal.trim()) { setError("Введите email"); return; }
+    const term = termOverride ?? selectedTerm;   // always use the passed term, not stale closure
     setStep("loading");
 
     try {
       const payload = isRenewal
-        ? { client_id: clientId, term: selectedTerm }
-        : { login: loginVal.trim(), email: emailVal.trim(), term: selectedTerm };
+        ? { client_id: clientId, term }
+        : { login: loginVal.trim(), email: emailVal.trim(), term };
 
       const { data: od } = await api.post("/shop/order", payload);
       const order = od.order;
@@ -213,7 +215,7 @@ export function PurchaseModal({
 
           <div className="flex gap-2">
             <button className="btn-ghost flex-1" onClick={() => setStep("select")}>← Назад</button>
-            <button className="btn-primary flex-1" onClick={() => doSubmit(login, email)}>
+            <button className="btn-primary flex-1" onClick={() => doSubmit(login, email, selectedTerm)}>
               {showPrice ? `Оплатить ${selectedPlan?.amount} ₽` : "Оформить"}
             </button>
           </div>
