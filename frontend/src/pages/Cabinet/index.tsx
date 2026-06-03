@@ -3,9 +3,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Shield, Download, QrCode, RefreshCw,
   LogOut, Clock, Server, ArrowLeft,
-  Mail, Hash, ChevronDown, Circle,
+  Mail, Hash, ChevronDown, Circle, Plus,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
 import { QRCodeSVG } from "qrcode.react";
@@ -14,6 +14,7 @@ import { Card } from "../../components/ui/Card";
 import { StatusBadge } from "../../components/ui/Badge";
 import { Spinner } from "../../components/ui/Spinner";
 import { Modal } from "../../components/ui/Modal";
+import { PurchaseModal } from "./PurchaseModal";
 import { api } from "../../api/client";
 
 type LoginMode = "email" | "id";
@@ -145,13 +146,14 @@ function LoginScreen({ onLogin }: {
 // ── Subscription card ─────────────────────────────────────────────────────────
 
 function SubscriptionCard({
-  client, isActive, onSelect, onDownload, onQr,
+  client, isActive, onSelect, onDownload, onQr, onRenew,
 }: {
   client: ClientInfo;
   isActive: boolean;
   onSelect: () => void;
   onDownload: () => void;
   onQr: () => void;
+  onRenew: () => void;
 }) {
   const days = daysLeft(client.expires_at);
   const exp  = client.expires_at ? new Date(client.expires_at) : null;
@@ -239,7 +241,7 @@ function SubscriptionCard({
                     <span className="text-xs text-slate-300">QR-код</span>
                   </button>
                   <button
-                    onClick={() => {}}
+                    onClick={onRenew}
                     className="glass glass-hover rounded-xl py-2.5 flex flex-col items-center gap-1.5"
                   >
                     <RefreshCw size={16} className="text-green-400" />
@@ -258,23 +260,36 @@ function SubscriptionCard({
 // ── Main cabinet ──────────────────────────────────────────────────────────────
 
 export default function Cabinet() {
-  const navigate = useNavigate();
+  const navigate   = useNavigate();
+  const qc         = useQueryClient();
 
-  // Stored in localStorage: primary client id + all client ids for this email
-  const [primaryId, setPrimaryId]   = useState(() => localStorage.getItem("cabinet_id") || "");
-  const [allIds, setAllIds]         = useState<string[]>(() => {
+  const [primaryId, setPrimaryId] = useState(() => localStorage.getItem("cabinet_id") || "");
+  const [allIds, setAllIds]       = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem("cabinet_ids") || "[]"); } catch { return []; }
   });
-  const [activeId, setActiveId]     = useState<string | null>(null);
-  const [qrConfig, setQrConfig]     = useState<string | null>(null);
+  const [activeId, setActiveId]   = useState<string | null>(null);
+  const [qrConfig, setQrConfig]   = useState<string | null>(null);
+
+  // Purchase / renew modal
+  const [purchaseOpen, setPurchaseOpen]     = useState(false);
+  const [renewTarget, setRenewTarget]       = useState<ClientInfo | null>(null);
+  const [buyNewOpen, setBuyNewOpen]         = useState(false);
 
   function handleLogin(id: string, clients: ClientInfo[]) {
     const ids = clients.map(c => c.id);
     localStorage.setItem("cabinet_id", id);
     localStorage.setItem("cabinet_ids", JSON.stringify(ids));
-    setPrimaryId(id);
-    setAllIds(ids);
-    setActiveId(id);
+    setPrimaryId(id); setAllIds(ids); setActiveId(id);
+  }
+
+  function openRenew(client: ClientInfo) {
+    setRenewTarget(client);
+    setPurchaseOpen(true);
+  }
+
+  function handlePurchaseSuccess() {
+    // Re-fetch all client data after renewal/purchase
+    qc.invalidateQueries({ queryKey: ["portal-clients"] });
   }
 
   function logout() {
@@ -394,11 +409,55 @@ export default function Cabinet() {
                 onSelect={() => setActiveId(activeId === client.id ? null : client.id)}
                 onDownload={() => downloadConfig(client.id, client.name)}
                 onQr={() => showQr(client.id)}
+                onRenew={() => openRenew(client)}
               />
             </motion.div>
           ))}
         </div>
+
+        {/* Buy new subscription */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.2 }}
+          className="mt-4"
+        >
+          <button
+            onClick={() => setBuyNewOpen(true)}
+            className="w-full glass glass-hover rounded-2xl py-3.5 flex items-center justify-center gap-2 text-sm text-slate-300 hover:text-white transition-colors border border-dashed border-white/10 hover:border-green-500/30"
+          >
+            <Plus size={16} className="text-green-400" />
+            Купить ещё одно устройство
+          </button>
+        </motion.div>
       </div>
+
+      {/* Renew modal */}
+      <PurchaseModal
+        open={purchaseOpen}
+        onClose={() => { setPurchaseOpen(false); setRenewTarget(null); }}
+        clientId={renewTarget?.id}
+        clientName={renewTarget?.name}
+        email={list[0]?.contact}
+        onSuccess={handlePurchaseSuccess}
+      />
+
+      {/* Buy new modal */}
+      <PurchaseModal
+        open={buyNewOpen}
+        onClose={() => setBuyNewOpen(false)}
+        email={list[0]?.contact}
+        onSuccess={() => {
+          setBuyNewOpen(false);
+          // Re-login by email to pick up new subscription
+          const contact = list[0]?.contact;
+          if (contact) {
+            api.post("/portal/auth", { email: contact })
+              .then(r => handleLogin(r.data.client_id, r.data.clients))
+              .catch(() => {});
+          }
+        }}
+      />
 
       {/* QR Modal */}
       <Modal open={!!qrConfig} onClose={() => setQrConfig(null)} title="QR-код" size="sm">
