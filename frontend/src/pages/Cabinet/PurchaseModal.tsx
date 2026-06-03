@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, ExternalLink } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Modal } from "../../components/ui/Modal";
@@ -10,9 +10,9 @@ interface Plan { term: string; label: string; amount: number }
 interface Props {
   open: boolean;
   onClose: () => void;
-  clientId?: string;     // set → renewal mode
+  clientId?: string;
   clientName?: string;
-  email?: string;        // pre-fill email
+  email?: string;
   onSuccess?: () => void;
 }
 
@@ -20,77 +20,68 @@ type Step = "select" | "form" | "loading" | "payment" | "success";
 
 const TERM_ORDER = ["3d", "7d", "14d", "1m", "3m", "6m", "1y"];
 
-// Static fallback when server prices haven't loaded yet
-const FALLBACK_PLANS: Plan[] = [
-  { term: "1m", label: "1 месяц",   amount: 0 },
-  { term: "3m", label: "3 месяца",  amount: 0 },
-  { term: "6m", label: "6 месяцев", amount: 0 },
-  { term: "1y", label: "1 год",     amount: 0 },
-];
-
 export function PurchaseModal({
   open, onClose, clientId, clientName, email: prefillEmail, onSuccess,
 }: Props) {
   const isRenewal = !!clientId;
 
-  const [step, setStep]           = useState<Step>("select");
-  const [selectedTerm, setTerm]   = useState("1m");
-  const [initialized, setInit]    = useState(false);   // set term from server only once
-  const [login, setLogin]         = useState("");
-  const [email, setEmail]         = useState(prefillEmail || "");
-  const [error, setError]         = useState("");
-  const [payUrl, setPayUrl]       = useState("");
+  // ── term stored in BOTH ref and state ──────────────────────────────────────
+  // ref  → always current value, no stale closure when passed to async fn
+  // state → triggers re-render so cards visually update
+  const termRef              = useRef("1m");
+  const [selectedTerm, setSelectedTermState] = useState("1m");
+
+  function selectTerm(t: string) {
+    termRef.current = t;          // update ref FIRST
+    setSelectedTermState(t);      // then trigger re-render
+  }
+
+  const [step, setStep]         = useState<Step>("select");
+  const [login, setLogin]       = useState("");
+  const [email, setEmail]       = useState(prefillEmail || "");
+  const [error, setError]       = useState("");
+  const [payUrl, setPayUrl]     = useState("");
   const [newExpiry, setNewExpiry] = useState("");
 
   const { data: shopCfg, isLoading: cfgLoading } = useQuery({
     queryKey: ["shop-config"],
     queryFn: async () => (await api.get("/shop/config")).data,
-    staleTime: 5 * 60_000,            // 5 min — no background refetch during session
+    staleTime: 10 * 60_000,
     refetchOnWindowFocus: false,
   });
 
-  const paymentsEnabled: boolean        = shopCfg?.payments_enabled ?? false;
+  const paymentsEnabled = shopCfg?.payments_enabled ?? false;
   const rawPrices: Record<string, Plan> = shopCfg?.prices ?? {};
+  const plans: Plan[] = TERM_ORDER.filter(t => rawPrices[t]).map(t => rawPrices[t]);
 
-  const plans: Plan[] = cfgLoading
-    ? FALLBACK_PLANS
-    : TERM_ORDER.filter(t => rawPrices[t]).map(t => rawPrices[t]);
-
-  // Set default term ONCE when plans first load — never again
+  // Set default term once when plans load
   useEffect(() => {
-    if (!cfgLoading && plans.length > 0 && !initialized) {
-      setInit(true);
-      setTerm(t => plans.find(p => p.term === t) ? t : plans[0].term);
+    if (!cfgLoading && plans.length > 0) {
+      const best = plans.find(p => p.term === termRef.current) ? termRef.current : plans[0].term;
+      selectTerm(best);
     }
-  }, [cfgLoading, initialized]);
+  }, [cfgLoading]); // eslint-disable-line
 
-  // Reset on open (but keep selectedTerm — user may re-open same modal)
+  // Reset on modal open
   useEffect(() => {
     if (open) {
       setStep("select");
       setError(""); setPayUrl(""); setNewExpiry("");
       setEmail(prefillEmail || "");
       setLogin("");
-      setInit(false);   // allow re-init when modal reopens
     }
   }, [open, prefillEmail]);
 
-  const selectedPlan = plans.find(p => p.term === selectedTerm) ?? plans[0];
-  const showPrice    = paymentsEnabled && selectedPlan?.amount > 0;
-  const btnLabel     = isRenewal
-    ? showPrice ? `Оплатить ${selectedPlan?.amount} ₽` : "Продлить"
-    : "Продолжить";
+  const selectedPlan    = plans.find(p => p.term === selectedTerm) ?? plans[0];
+  const showPrice       = paymentsEnabled && (selectedPlan?.amount ?? 0) > 0;
 
-  async function handleProceed() {
-    setError("");
-    if (!isRenewal) { setStep("form"); return; }
-    await doSubmit("", email, selectedTerm);
-  }
+  // ── Submit ─────────────────────────────────────────────────────────────────
+  async function doSubmit(loginVal: string, emailVal: string) {
+    // Read from ref — guaranteed to be latest, no closure staleness
+    const term = termRef.current;
 
-  async function doSubmit(loginVal: string, emailVal: string, termOverride?: string) {
     if (!isRenewal && !loginVal.trim()) { setError("Введите имя"); return; }
     if (!isRenewal && !emailVal.trim()) { setError("Введите email"); return; }
-    const term = termOverride ?? selectedTerm;   // always use the passed term, not stale closure
     setStep("loading");
 
     try {
@@ -110,14 +101,12 @@ export function PurchaseModal({
 
       if (paymentsEnabled) {
         const { data: pd } = await api.post("/shop/payment", {
-          order_id: order.id,
-          term: selectedTerm,
+          order_id: order.id, term,
           email: emailVal || order.email || "",
         });
         setPayUrl(pd.pay_url);
         setStep("payment");
       } else {
-        // No payment system — show success anyway (order pending, admin will process)
         setNewExpiry(order.expires_at || "");
         setStep("success");
         onSuccess?.();
@@ -135,7 +124,7 @@ export function PurchaseModal({
   return (
     <Modal open={open} onClose={onClose} title={title} size="sm">
 
-      {/* ── Select plan ─────────────────────────────────────────────────── */}
+      {/* ── Select plan ──────────────────────────────────────────────────── */}
       {step === "select" && (
         <div className="space-y-4">
           {cfgLoading ? (
@@ -147,25 +136,19 @@ export function PurchaseModal({
           ) : (
             <div className="grid grid-cols-2 gap-2">
               {plans.map(plan => {
-                const isSelected = selectedTerm === plan.term;
+                const active = selectedTerm === plan.term;
                 return (
                   <button
                     key={plan.term}
-                    onClick={() => setTerm(plan.term)}
+                    onClick={() => selectTerm(plan.term)}
                     className="rounded-xl p-3 text-left transition-all relative"
                     style={{
-                      background: isSelected
-                        ? "rgba(34,197,94,0.12)"
-                        : "rgba(255,255,255,0.04)",
-                      border: isSelected
-                        ? "1.5px solid rgba(34,197,94,0.55)"
-                        : "1.5px solid rgba(255,255,255,0.10)",
-                      boxShadow: isSelected
-                        ? "0 0 16px -4px rgba(34,197,94,0.25)"
-                        : "none",
+                      background: active ? "rgba(34,197,94,0.12)" : "rgba(255,255,255,0.04)",
+                      border: active ? "1.5px solid rgba(34,197,94,0.55)" : "1.5px solid rgba(255,255,255,0.10)",
+                      boxShadow: active ? "0 0 16px -4px rgba(34,197,94,0.25)" : "none",
                     }}
                   >
-                    {isSelected && (
+                    {active && (
                       <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-green-400" />
                     )}
                     <p className="text-base font-bold text-white">
@@ -179,8 +162,9 @@ export function PurchaseModal({
           )}
 
           {selectedPlan && !cfgLoading && (
-            <div className="rounded-xl bg-white/4 border border-white/8 px-4 py-3 flex items-center justify-between">
-              <span className="text-sm text-slate-300">Итого</span>
+            <div className="rounded-xl px-4 py-3 flex items-center justify-between"
+              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              <span className="text-sm text-slate-300">{selectedPlan.label} — итого</span>
               <span className="text-white font-semibold">
                 {showPrice ? `${selectedPlan.amount} ₽` : "Бесплатно"}
               </span>
@@ -193,16 +177,18 @@ export function PurchaseModal({
             <button className="btn-ghost flex-1" onClick={onClose}>Отмена</button>
             <button
               className="btn-primary flex-1"
-              onClick={handleProceed}
+              onClick={() => isRenewal ? doSubmit("", email) : setStep("form")}
               disabled={cfgLoading || plans.length === 0}
             >
-              {btnLabel}
+              {isRenewal
+                ? showPrice ? `Оплатить ${selectedPlan?.amount} ₽` : "Продлить"
+                : "Продолжить →"}
             </button>
           </div>
         </div>
       )}
 
-      {/* ── Fill form (new subscription) ────────────────────────────────── */}
+      {/* ── Form (new subscription) ──────────────────────────────────────── */}
       {step === "form" && (
         <div className="space-y-3">
           <div>
@@ -216,19 +202,17 @@ export function PurchaseModal({
               value={email} onChange={e => setEmail(e.target.value)}
               onKeyDown={e => e.key === "Enter" && doSubmit(login, email)} />
           </div>
-
-          <div className="rounded-xl bg-white/4 border border-white/8 px-4 py-3 flex items-center justify-between">
-            <span className="text-sm text-slate-300">{selectedPlan?.label}</span>
+          <div className="rounded-xl px-4 py-3 flex items-center justify-between"
+            style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+            <span className="text-sm text-slate-300">{selectedPlan?.label} — итого</span>
             <span className="text-white font-semibold">
               {showPrice ? `${selectedPlan?.amount} ₽` : "Бесплатно"}
             </span>
           </div>
-
           {error && <p className="text-xs text-red-400">{error}</p>}
-
           <div className="flex gap-2">
             <button className="btn-ghost flex-1" onClick={() => setStep("select")}>← Назад</button>
-            <button className="btn-primary flex-1" onClick={() => doSubmit(login, email, selectedTerm)}>
+            <button className="btn-primary flex-1" onClick={() => doSubmit(login, email)}>
               {showPrice ? `Оплатить ${selectedPlan?.amount} ₽` : "Оформить"}
             </button>
           </div>
@@ -246,22 +230,19 @@ export function PurchaseModal({
       {/* ── Payment ──────────────────────────────────────────────────────── */}
       {step === "payment" && (
         <div className="flex flex-col items-center gap-4 py-4 text-center">
-          <div className="w-12 h-12 rounded-xl bg-green-500/15 border border-green-500/20 flex items-center justify-center text-2xl">
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
+            style={{ background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.2)" }}>
             💳
           </div>
           <div>
             <p className="text-white font-semibold mb-1">Перейдите к оплате</p>
-            <p className="text-sm text-slate-400">
-              После оплаты подписка активируется автоматически
-            </p>
+            <p className="text-sm text-slate-400">После оплаты подписка активируется автоматически</p>
           </div>
           <a href={payUrl} target="_blank" rel="noreferrer" className="btn-primary w-full justify-center">
             Оплатить {selectedPlan?.amount} ₽ <ExternalLink size={14} />
           </a>
-          <button
-            className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
-            onClick={() => { onClose(); onSuccess?.(); }}
-          >
+          <button className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+            onClick={() => { onClose(); onSuccess?.(); }}>
             Уже оплатил — закрыть
           </button>
         </div>
@@ -286,7 +267,7 @@ export function PurchaseModal({
               </p>
             ) : (
               <p className="text-sm text-slate-400">
-                Заказ принят. Администратор обработает его в ближайшее время.
+                Заказ принят, администратор обработает его в ближайшее время.
               </p>
             )}
           </div>
