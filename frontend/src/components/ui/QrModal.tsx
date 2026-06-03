@@ -54,7 +54,7 @@ function toBase64Url(str: string): string {
  *   3. Tries Qt qUncompress (fails → uses raw bytes)
  *   4. Parses JSON
  */
-function buildAmneziaUri(config: string, name: string): string {
+function buildAmneziaUri(config: string, _name: string): string {
   const clean = stripComments(config);
   const f     = parseFields(clean);
 
