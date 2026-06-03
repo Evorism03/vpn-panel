@@ -146,22 +146,35 @@ export function PurchaseModal({
             </p>
           ) : (
             <div className="grid grid-cols-2 gap-2">
-              {plans.map(plan => (
-                <button
-                  key={plan.term}
-                  onClick={() => setTerm(plan.term)}
-                  className={`rounded-xl p-3 text-left border transition-all ${
-                    selectedTerm === plan.term
-                      ? "border-green-500/50 bg-green-500/10"
-                      : "border-white/8 bg-white/3 hover:bg-white/6"
-                  }`}
-                >
-                  <p className="text-base font-bold text-white">
-                    {showPrice || plan.amount > 0 ? `${plan.amount} ₽` : "Бесплатно"}
-                  </p>
-                  <p className="text-xs text-slate-400">{plan.label}</p>
-                </button>
-              ))}
+              {plans.map(plan => {
+                const isSelected = selectedTerm === plan.term;
+                return (
+                  <button
+                    key={plan.term}
+                    onClick={() => setTerm(plan.term)}
+                    className="rounded-xl p-3 text-left transition-all relative"
+                    style={{
+                      background: isSelected
+                        ? "rgba(34,197,94,0.12)"
+                        : "rgba(255,255,255,0.04)",
+                      border: isSelected
+                        ? "1.5px solid rgba(34,197,94,0.55)"
+                        : "1.5px solid rgba(255,255,255,0.10)",
+                      boxShadow: isSelected
+                        ? "0 0 16px -4px rgba(34,197,94,0.25)"
+                        : "none",
+                    }}
+                  >
+                    {isSelected && (
+                      <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-green-400" />
+                    )}
+                    <p className="text-base font-bold text-white">
+                      {plan.amount > 0 ? `${plan.amount} ₽` : "Бесплатно"}
+                    </p>
+                    <p className="text-xs text-slate-400">{plan.label}</p>
+                  </button>
+                );
+              })}
             </div>
           )}
 
