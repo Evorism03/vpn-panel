@@ -54,7 +54,7 @@ export default function Clients() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["clients"] }),
   });
 
-  async function downloadConfig(id: string, name: string) {
+  async function downloadConfig(id: string) {
     const { data: d } = await api.get(`/admin/clients/${id}/config`);
     const blob = new Blob([d.config], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
@@ -147,7 +147,7 @@ export default function Clients() {
                   {/* Actions */}
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
-                      onClick={() => downloadConfig(client.id, client.name)}
+                      onClick={() => downloadConfig(client.id)}
                       className="p-2 rounded-lg text-slate-400 hover:text-green-400 hover:bg-green-500/10 transition-colors"
                       title="Скачать конфиг"
                     >
