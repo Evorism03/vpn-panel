@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Plus, Search, Download, Trash2, RefreshCw } from "lucide-react";
+import { Plus, Search, Download, Trash2, RefreshCw, QrCode } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Card } from "../../components/ui/Card";
@@ -9,6 +9,7 @@ import { Spinner } from "../../components/ui/Spinner";
 import { Modal } from "../../components/ui/Modal";
 import { api } from "../../api/client";
 import { useDebounce } from "../../hooks/useDebounce";
+import { QrModal } from "../../components/ui/QrModal";
 
 interface Client {
   id: string; name: string; public_key: string; contact: string;
@@ -19,6 +20,7 @@ export default function Clients() {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [qrData, setQrData] = useState<{ config: string; name: string } | null>(null);
   const [clientName, setClientName] = useState("");
   const [contact, setContact] = useState("");
   const [term, setTerm] = useState("1m");
@@ -154,6 +156,16 @@ export default function Clients() {
                       <Download size={15} />
                     </button>
                     <button
+                      onClick={async () => {
+                        const { data: d } = await api.get(`/admin/clients/${client.id}/config`);
+                        setQrData({ config: d.config, name: client.name });
+                      }}
+                      className="p-2 rounded-lg text-slate-400 hover:text-green-400 hover:bg-green-500/10 transition-colors"
+                      title="QR-код"
+                    >
+                      <QrCode size={15} />
+                    </button>
+                    <button
                       onClick={() => renewMut.mutate({ id: client.id, term: "1m" })}
                       className="p-2 rounded-lg text-slate-400 hover:text-blue-400 hover:bg-blue-500/10 transition-colors"
                       title="Продлить на 1 месяц"
@@ -207,6 +219,13 @@ export default function Clients() {
           </div>
         </div>
       </Modal>
+
+      <QrModal
+        open={!!qrData}
+        onClose={() => setQrData(null)}
+        config={qrData?.config ?? ""}
+        clientName={qrData?.name}
+      />
     </div>
   );
 }

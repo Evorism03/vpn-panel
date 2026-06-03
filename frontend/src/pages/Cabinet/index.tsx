@@ -8,11 +8,11 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ru } from "date-fns/locale";
-import { QRCodeSVG } from "qrcode.react";
 import { useNavigate } from "react-router-dom";
 import { StatusBadge } from "../../components/ui/Badge";
 import { Spinner } from "../../components/ui/Spinner";
 import { Modal } from "../../components/ui/Modal";
+import { QrModal } from "../../components/ui/QrModal";
 import { PurchaseModal } from "./PurchaseModal";
 import { api } from "../../api/client";
 
@@ -223,7 +223,7 @@ export default function Cabinet() {
     catch { return []; }
   });
 
-  const [qrConfig,     setQrConfig]     = useState<string | null>(null);
+  const [qrData, setQrData] = useState<{ config: string; name: string } | null>(null);
   const [renewTarget,  setRenewTarget]  = useState<ClientInfo | null>(null);
   const [renewOpen,    setRenewOpen]    = useState(false);
   const [buyNewOpen,   setBuyNewOpen]   = useState(false);
@@ -269,9 +269,9 @@ export default function Cabinet() {
     URL.revokeObjectURL(url);
   }
 
-  async function showQr(id: string) {
-    const { data } = await api.get(`/portal/client/${id}/config`);
-    setQrConfig(data.config);
+  async function showQr(client: ClientInfo) {
+    const { data } = await api.get(`/portal/client/${client.id}/config`);
+    setQrData({ config: data.config, name: client.name });
   }
 
   function openRenew(client: ClientInfo) {
@@ -383,7 +383,7 @@ export default function Cabinet() {
               <SubCard
                 client={client}
                 onDownload={() => downloadConfig(client)}
-                onQr={() => showQr(client.id)}
+                onQr={() => showQr(client)}
                 onRenew={() => openRenew(client)}
               />
             </motion.div>
@@ -403,18 +403,12 @@ export default function Cabinet() {
       </div>
 
       {/* QR Modal */}
-      <Modal open={!!qrConfig} onClose={() => setQrConfig(null)} title="QR-код" size="sm">
-        <div className="flex justify-center">
-          {qrConfig && (
-            <div className="p-4 bg-white rounded-2xl">
-              <QRCodeSVG value={qrConfig} size={220} />
-            </div>
-          )}
-        </div>
-        <p className="text-xs text-slate-500 text-center mt-4">
-          Отсканируйте в приложении AmneziaVPN или WireGuard
-        </p>
-      </Modal>
+      <QrModal
+        open={!!qrData}
+        onClose={() => setQrData(null)}
+        config={qrData?.config ?? ""}
+        clientName={qrData?.name}
+      />
 
       {/* Renew modal */}
       <PurchaseModal
