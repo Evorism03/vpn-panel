@@ -18,38 +18,49 @@ class PortalAuth(BaseModel):
 
 @router.post("/auth")
 def portal_auth(body: PortalAuth, db: Session = Depends(get_db)):
-    """Login by client_id OR email."""
+    """Login by client_id OR email.
+    - client_id → returns single client
+    - email     → returns all clients for that email (may be many devices/subscriptions)
+    """
+    from sqlalchemy import func
+
     client_id = body.client_id.strip()
     email     = body.email.strip().lower()
 
     if not client_id and not email:
         raise HTTPException(400, "Укажите ID клиента или email")
 
-    client = None
-
-    # 1. Try by client_id
+    # ── By client_id ──────────────────────────────────────────────────────────
     if client_id:
         client = db.query(Client).filter(Client.id == client_id).first()
+        if not client:
+            raise HTTPException(404, "Клиент не найден")
+        return {
+            "client": _client_dict(client),
+            "client_id": client.id,
+            "clients": [_client_dict(client)],
+        }
 
-    # 2. Try by email
-    if client is None and email:
-        from sqlalchemy import func
-        client = (db.query(Client)
-                  .filter(func.lower(Client.contact) == email)
-                  .filter(Client.status != "expired")
-                  .order_by(Client.created_at.desc())
-                  .first())
-        # Fallback: include expired if no active found
-        if client is None:
-            client = (db.query(Client)
-                      .filter(func.lower(Client.contact) == email)
-                      .order_by(Client.created_at.desc())
-                      .first())
+    # ── By email ──────────────────────────────────────────────────────────────
+    clients = (db.query(Client)
+               .filter(func.lower(Client.contact) == email)
+               .order_by(
+                   # active first, then by expiry descending
+                   Client.status != "active",
+                   Client.expires_at.desc().nulls_last(),
+                   Client.created_at.desc(),
+               )
+               .all())
 
-    if client is None:
-        raise HTTPException(404, "Клиент не найден")
+    if not clients:
+        raise HTTPException(404, "Клиент с таким email не найден")
 
-    return {"client": _client_dict(client), "client_id": client.id}
+    primary = clients[0]
+    return {
+        "client": _client_dict(primary),
+        "client_id": primary.id,
+        "clients": [_client_dict(c) for c in clients],
+    }
 
 
 @router.get("/client/{client_id}")
