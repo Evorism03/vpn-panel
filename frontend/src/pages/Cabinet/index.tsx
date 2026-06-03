@@ -259,11 +259,12 @@ export default function Cabinet() {
   });
 
   async function downloadConfig(client: ClientInfo) {
-    const res = await api.get(`/portal/client/${client.id}/config`, { responseType: "blob" });
-    const url = URL.createObjectURL(res.data);
+    const { data } = await api.get(`/portal/client/${client.id}/config`);
+    const blob = new Blob([data.config], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${client.name || client.id}.conf`;
+    a.download = data.filename || `${client.name || client.id}.conf`;
     a.click();
     URL.revokeObjectURL(url);
   }

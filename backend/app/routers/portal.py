@@ -72,16 +72,24 @@ def get_client(client_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/client/{client_id}/config")
-def download_config(client_id: str, db: Session = Depends(get_db)):
+def download_config(
+    client_id: str,
+    download: bool = False,
+    db: Session = Depends(get_db),
+):
     client = db.query(Client).filter(Client.id == client_id).first()
     if not client or not client.config_text:
         raise HTTPException(404, "Config not available")
-    filename = f"{client.name or client_id}.conf"
-    return Response(
-        content=client.config_text,
-        media_type="text/plain",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    if download:
+        # Force browser download as file
+        filename = f"{client.name or client_id}.conf"
+        return Response(
+            content=client.config_text,
+            media_type="text/plain",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    # Default: return JSON so frontend can use config text easily
+    return {"config": client.config_text, "filename": f"{client.name or client_id}.conf"}
 
 
 @router.get("/client/{client_id}/orders")
