@@ -72,7 +72,10 @@ async def lifespan(_app: FastAPI):
     db = SessionLocal()
     try:
         bootstrap_admin(db)
-        enforce_expired(db)
+        try:
+            enforce_expired(db)
+        except Exception:
+            pass  # AWG may not be reachable at startup — that's fine
     finally:
         db.close()
 
