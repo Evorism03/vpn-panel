@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { deflate } from "pako";
 import { QRCodeCanvas } from "qrcode.react";
 import { Download } from "lucide-react";
 import { Modal } from "./Modal";
@@ -12,7 +13,7 @@ interface Props {
 
 type QrMode = "amnezia" | "wireguard";
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Config helpers ────────────────────────────────────────────────────────────
 
 function stripComments(cfg: string): string {
   return cfg
@@ -23,7 +24,6 @@ function stripComments(cfg: string): string {
     .trim();
 }
 
-/** Parse all key=value lines from a .conf file */
 function parseFields(cfg: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const line of cfg.split("\n")) {
@@ -36,62 +36,78 @@ function parseFields(cfg: string): Record<string, string> {
   return out;
 }
 
-/** URL-safe Base64 (no padding) — what AmneziaVPN expects */
-function toBase64Url(str: string): string {
-  return btoa(unescape(encodeURIComponent(str)))
+// ── Qt qCompress ──────────────────────────────────────────────────────────────
+// Qt format: [4 bytes big-endian uncompressed_size][zlib compressed data]
+// This is exactly what AmneziaVPN generates and expects when scanning QR.
+
+function qCompress(data: Uint8Array): Uint8Array {
+  const compressed  = deflate(data);               // pako → zlib format
+  const result      = new Uint8Array(4 + compressed.length);
+  const view        = new DataView(result.buffer);
+  view.setUint32(0, data.length, false);            // big-endian size header
+  result.set(compressed, 4);
+  return result;
+}
+
+// ── Base64 URL (no padding) — what AmneziaVPN uses ───────────────────────────
+
+function toBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary)
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=/g, "");
 }
 
-/**
- * Build AmneziaVPN import URI.
- * Format: vpn://BASE64URL( JSON array with container config )
- *
- * AmneziaVPN scanner:
- *   1. Strips "vpn://"
- *   2. Base64-URL decodes
- *   3. Tries Qt qUncompress (fails → uses raw bytes)
- *   4. Parses JSON
- */
-function buildAmneziaUri(config: string, _name: string): string {
+// ── AmneziaVPN container JSON ─────────────────────────────────────────────────
+// Format used by AmneziaVPN when exporting/importing connections:
+// vpn://BASE64URL( qCompress( JSON_string ) )
+
+function buildAmneziaUri(config: string): string {
   const clean = stripComments(config);
   const f     = parseFields(clean);
 
-  // Endpoint = "1.2.3.4:51820"  →  host + port
-  const ep   = f["Endpoint"] || "";
+  const ep        = f["Endpoint"] || "";
   const lastColon = ep.lastIndexOf(":");
-  const host = lastColon >= 0 ? ep.slice(0, lastColon) : ep;
-  const port = lastColon >= 0 ? ep.slice(lastColon + 1) : "51820";
+  const host      = lastColon >= 0 ? ep.slice(0, lastColon) : ep;
+  const port      = lastColon >= 0 ? ep.slice(lastColon + 1) : "51820";
 
   const container = [
     {
       container: "awg",
       awg: {
-        last_config:                 clean,
-        hostName:                    host,
-        port:                        port,
-        transport_proto:             "udp",
-        junkPacketCount:             f["Jc"]   || "4",
-        junkPacketMinSize:           f["Jmin"] || "40",
-        junkPacketMaxSize:           f["Jmax"] || "70",
-        initPacketJunkSize:          f["S1"]   || "0",
-        responsePacketJunkSize:      f["S2"]   || "0",
-        initPacketMagicHeader:       f["H1"]   || "1",
-        responsePacketMagicHeader:   f["H2"]   || "2",
-        underloadPacketMagicHeader:  f["H3"]   || "3",
-        transportPacketMagicHeader:  f["H4"]   || "4",
-        client_priv_key:             f["PrivateKey"]   || "",
-        server_pub_key:              f["PublicKey"]    || "",
-        client_psk:                  f["PresharedKey"] || "",
+        last_config:                clean,
+        hostName:                   host,
+        port:                       port,
+        transport_proto:            "udp",
+        junkPacketCount:            f["Jc"]   || "4",
+        junkPacketMinSize:          f["Jmin"] || "40",
+        junkPacketMaxSize:          f["Jmax"] || "70",
+        initPacketJunkSize:         f["S1"]   || "0",
+        responsePacketJunkSize:     f["S2"]   || "0",
+        initPacketMagicHeader:      f["H1"]   || "1",
+        responsePacketMagicHeader:  f["H2"]   || "2",
+        underloadPacketMagicHeader: f["H3"]   || "3",
+        transportPacketMagicHeader: f["H4"]   || "4",
+        client_priv_key:            f["PrivateKey"]   || "",
+        server_pub_key:             f["PublicKey"]    || "",
+        client_psk:                 f["PresharedKey"] || "",
       },
     },
   ];
 
-  return "vpn://" + toBase64Url(JSON.stringify(container));
+  const json      = JSON.stringify(container);
+  const bytes     = new TextEncoder().encode(json);
+  const compressed = qCompress(bytes);
+
+  return "vpn://" + toBase64Url(compressed);
 }
 
-/** Standard WireGuard QR — raw .conf without AWG-specific params */
+// ── WireGuard plain QR ────────────────────────────────────────────────────────
+
 const AWG_RE = /^(Jc|Jmin|Jmax|S1|S2|S3|S4|H1|H2|H3|H4)\s*=/;
 
 function buildWireguardData(config: string): string {
@@ -109,7 +125,7 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
   const [mode, setMode] = useState<QrMode>("amnezia");
 
   const qrData = mode === "amnezia"
-    ? buildAmneziaUri(config, clientName || "VPN")
+    ? buildAmneziaUri(config)
     : buildWireguardData(config);
 
   const tooBig = qrData.length > 2900;
@@ -117,7 +133,7 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
   function downloadQr() {
     const canvas = document.getElementById("qr-canvas-el") as HTMLCanvasElement | null;
     if (!canvas) return;
-    const a = document.createElement("a");
+    const a    = document.createElement("a");
     a.href     = canvas.toDataURL("image/png");
     a.download = `${clientName || "vpn"}-${mode}-qr.png`;
     a.click();
@@ -143,7 +159,7 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
       {tooBig && (
         <div className="mb-4 px-3 py-2 rounded-xl text-xs text-yellow-400"
           style={{ background: "rgba(234,179,8,0.08)", border: "1px solid rgba(234,179,8,0.2)" }}>
-          ⚠ Конфиг слишком большой для QR — скачайте .conf файл.
+          ⚠ Данные слишком большие. Используйте скачивание .conf файла.
         </div>
       )}
 
@@ -162,12 +178,11 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
         ) : (
           <div className="w-[262px] h-[50px] rounded-xl flex items-center justify-center"
             style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-            <p className="text-xs text-slate-500">Конфиг слишком большой для QR</p>
+            <p className="text-xs text-slate-500">Слишком большой — скачайте .conf файл</p>
           </div>
         )}
       </div>
 
-      {/* Hint */}
       <p className="text-xs text-slate-500 text-center mb-4">
         {mode === "amnezia"
           ? "AmneziaVPN → + → Добавить туннель → Сканировать QR"
