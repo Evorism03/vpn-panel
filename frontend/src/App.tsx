@@ -7,6 +7,7 @@ import Dashboard from "./pages/Admin/Dashboard";
 import Clients from "./pages/Admin/Clients";
 import Orders from "./pages/Admin/Orders";
 import Audit from "./pages/Admin/Audit";
+import Servers from "./pages/Admin/Servers";
 import Settings from "./pages/Admin/Settings";
 import { AdminLayout } from "./pages/Admin/Layout";
 
@@ -16,38 +17,27 @@ function RequireAuth({ children }: { children: JSX.Element }) {
   return children;
 }
 
+function AdminPage({ children }: { children: JSX.Element }) {
+  return (
+    <RequireAuth>
+      <AdminLayout>{children}</AdminLayout>
+    </RequireAuth>
+  );
+}
+
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Landing />} />
-      <Route path="/cabinet" element={<Cabinet />} />
-      <Route path="/admin/login" element={<AdminLogin />} />
-      <Route path="/admin" element={
-        <RequireAuth>
-          <AdminLayout><Dashboard /></AdminLayout>
-        </RequireAuth>
-      } />
-      <Route path="/admin/clients" element={
-        <RequireAuth>
-          <AdminLayout><Clients /></AdminLayout>
-        </RequireAuth>
-      } />
-      <Route path="/admin/orders" element={
-        <RequireAuth>
-          <AdminLayout><Orders /></AdminLayout>
-        </RequireAuth>
-      } />
-      <Route path="/admin/audit" element={
-        <RequireAuth>
-          <AdminLayout><Audit /></AdminLayout>
-        </RequireAuth>
-      } />
-      <Route path="/admin/settings" element={
-        <RequireAuth>
-          <AdminLayout><Settings /></AdminLayout>
-        </RequireAuth>
-      } />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="/"             element={<Landing />} />
+      <Route path="/cabinet"      element={<Cabinet />} />
+      <Route path="/admin/login"  element={<AdminLogin />} />
+      <Route path="/admin"        element={<AdminPage><Dashboard /></AdminPage>} />
+      <Route path="/admin/clients"element={<AdminPage><Clients /></AdminPage>} />
+      <Route path="/admin/servers"element={<AdminPage><Servers /></AdminPage>} />
+      <Route path="/admin/orders" element={<AdminPage><Orders /></AdminPage>} />
+      <Route path="/admin/audit"  element={<AdminPage><Audit /></AdminPage>} />
+      <Route path="/admin/settings" element={<AdminPage><Settings /></AdminPage>} />
+      <Route path="*"             element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

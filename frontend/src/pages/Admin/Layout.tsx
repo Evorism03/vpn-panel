@@ -4,16 +4,17 @@ import { clsx } from "clsx";
 import { useSSE } from "../../hooks/useSSE";
 import {
   LayoutDashboard, Users, ShoppingCart, Settings,
-  LogOut, Shield, Menu, ClipboardList,
+  LogOut, Shield, Menu, ClipboardList, Server,
 } from "lucide-react";
 import { useAuthStore } from "../../store/auth";
 
 const NAV = [
-  { to: "/admin",         icon: LayoutDashboard, label: "Дашборд",    exact: true },
-  { to: "/admin/clients", icon: Users,           label: "Клиенты"                 },
-  { to: "/admin/orders",  icon: ShoppingCart,    label: "Заказы"                  },
-  { to: "/admin/audit",   icon: ClipboardList,   label: "Аудит"                   },
-  { to: "/admin/settings",icon: Settings,        label: "Настройки"               },
+  { to: "/admin",          icon: LayoutDashboard, label: "Дашборд",  exact: true },
+  { to: "/admin/clients",  icon: Users,           label: "Клиенты"              },
+  { to: "/admin/servers",  icon: Server,          label: "Серверы"              },
+  { to: "/admin/orders",   icon: ShoppingCart,    label: "Заказы"               },
+  { to: "/admin/audit",    icon: ClipboardList,   label: "Аудит"                },
+  { to: "/admin/settings", icon: Settings,        label: "Настройки"            },
 ];
 
 export function AdminLayout({ children }: { children: ReactNode }) {

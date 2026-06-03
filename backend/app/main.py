@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from .auth import bootstrap_admin, decode_token
 from .database import SessionLocal, init_db
-from .routers import admin, auth, portal, shop
+from .routers import admin, auth, portal, shop, servers
 from .services.awg import get_cfg_hash
 from .services.orders import enforce_expired
 from . import broadcast as _bc
@@ -99,6 +99,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(admin.router)
+app.include_router(servers.router)
 app.include_router(portal.router)
 app.include_router(shop.router)
 
