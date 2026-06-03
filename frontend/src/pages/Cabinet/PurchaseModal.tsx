@@ -48,7 +48,7 @@ export function PurchaseModal({
   // Include `term` key explicitly — rawPrices[t] only has {amount, label}
   const plans: Plan[] = TERM_ORDER
     .filter(t => rawPrices[t])
-    .map(t => ({ term: t, ...rawPrices[t] }));
+    .map(t => ({ amount: rawPrices[t].amount, label: rawPrices[t].label, term: t }));
 
   // Reset form when modal opens — keep term as-is so user doesn't lose selection
   useEffect(() => {
