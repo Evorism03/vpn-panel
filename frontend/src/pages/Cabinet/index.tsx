@@ -11,7 +11,6 @@ import { ru } from "date-fns/locale";
 import { useNavigate } from "react-router-dom";
 import { StatusBadge } from "../../components/ui/Badge";
 import { Spinner } from "../../components/ui/Spinner";
-import { Modal } from "../../components/ui/Modal";
 import { QrModal } from "../../components/ui/QrModal";
 import { PurchaseModal } from "./PurchaseModal";
 import { api } from "../../api/client";
