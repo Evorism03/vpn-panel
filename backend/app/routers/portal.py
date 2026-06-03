@@ -11,21 +11,45 @@ router = APIRouter(prefix="/api/portal", tags=["portal"])
 
 
 class PortalAuth(BaseModel):
-    client_id: str
-    contact: str = ""
+    # Either client_id OR email — one must be provided
+    client_id: str = ""
+    email: str = ""
 
 
 @router.post("/auth")
 def portal_auth(body: PortalAuth, db: Session = Depends(get_db)):
-    """Login to cabinet by client_id (+ optional contact verification)."""
-    client = db.query(Client).filter(Client.id == body.client_id.strip()).first()
-    if not client:
-        raise HTTPException(404, "Client not found")
-    # Optional: verify contact matches
-    if body.contact.strip() and client.contact:
-        if body.contact.strip().lower() != client.contact.lower():
-            raise HTTPException(403, "Contact does not match")
-    return {"client": _client_dict(client)}
+    """Login by client_id OR email."""
+    client_id = body.client_id.strip()
+    email     = body.email.strip().lower()
+
+    if not client_id and not email:
+        raise HTTPException(400, "Укажите ID клиента или email")
+
+    client = None
+
+    # 1. Try by client_id
+    if client_id:
+        client = db.query(Client).filter(Client.id == client_id).first()
+
+    # 2. Try by email
+    if client is None and email:
+        from sqlalchemy import func
+        client = (db.query(Client)
+                  .filter(func.lower(Client.contact) == email)
+                  .filter(Client.status != "expired")
+                  .order_by(Client.created_at.desc())
+                  .first())
+        # Fallback: include expired if no active found
+        if client is None:
+            client = (db.query(Client)
+                      .filter(func.lower(Client.contact) == email)
+                      .order_by(Client.created_at.desc())
+                      .first())
+
+    if client is None:
+        raise HTTPException(404, "Клиент не найден")
+
+    return {"client": _client_dict(client), "client_id": client.id}
 
 
 @router.get("/client/{client_id}")
