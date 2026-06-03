@@ -13,8 +13,8 @@ interface Props {
 type QrMode = "amnezia" | "wireguard";
 
 /**
- * Strip comment lines from config to reduce QR code size.
- * AmneziaVPN doesn't need them and QR codes have a size limit.
+ * Strip comment lines (# ...) to reduce QR size.
+ * Both AmneziaVPN and WireGuard ignore comments anyway.
  */
 function stripComments(config: string): string {
   return config
@@ -26,37 +26,49 @@ function stripComments(config: string): string {
 }
 
 /**
- * AmneziaVPN QR format — single JSON object (NOT array):
- * {"config": "...conf...", "description": "name"}
+ * AmneziaVPN reads CLIENT configs as raw .conf text (same as WireGuard).
+ * JSON-array format is only for SERVER container export, not client configs.
  *
- * WireGuard QR format — raw .conf text (comments stripped for size)
+ * The difference between modes:
+ * - amnezia:   keeps AWG-specific params (Jc/Jmin/Jmax/S1/S2/H1-H4)
+ * - wireguard: strips AWG params so standard WireGuard apps don't choke
  */
-function buildQrData(config: string, name: string, mode: QrMode): string {
+const AWG_PARAMS = /^(Jc|Jmin|Jmax|S1|S2|S3|S4|H1|H2|H3|H4|I1|I2|I3|I4|I5)\s*=/;
+
+function buildQrData(config: string, mode: QrMode): string {
   const clean = stripComments(config);
-  if (mode === "amnezia") {
-    return JSON.stringify({ config: clean, description: name || "VPN" });
+  if (mode === "wireguard") {
+    // Remove AmneziaWG-only params for standard WireGuard clients
+    return clean
+      .split("\n")
+      .filter(line => !AWG_PARAMS.test(line.trim()))
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
   }
+  // AmneziaVPN: full config as-is (with AWG params)
   return clean;
 }
 
 export function QrModal({ open, onClose, config, clientName }: Props) {
   const [mode, setMode] = useState<QrMode>("amnezia");
 
-  const qrData = buildQrData(config, clientName || "VPN", mode);
-  const tooBig = qrData.length > 2800; // QR v40 limit ~2953 bytes
+  const qrData  = buildQrData(config, mode);
+  const tooBig  = qrData.length > 2800;
 
   function downloadQr() {
     const canvas = document.getElementById("qr-canvas-el") as HTMLCanvasElement | null;
     if (!canvas) return;
     const url = canvas.toDataURL("image/png");
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${clientName || "vpn"}-qr.png`;
+    const a   = document.createElement("a");
+    a.href    = url;
+    a.download = `${clientName || "vpn"}-${mode}-qr.png`;
     a.click();
   }
 
   return (
     <Modal open={open} onClose={onClose} title="QR-код подключения" size="sm">
+
       {/* Format toggle */}
       <div className="flex rounded-xl p-0.5 mb-5"
         style={{ background: "rgba(255,255,255,0.05)" }}>
@@ -74,7 +86,7 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
         ))}
       </div>
 
-      {/* Warning if config too large */}
+      {/* Too large warning */}
       {tooBig && (
         <div className="mb-4 px-3 py-2 rounded-xl text-xs text-yellow-400"
           style={{ background: "rgba(234,179,8,0.08)", border: "1px solid rgba(234,179,8,0.2)" }}>
@@ -82,20 +94,20 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
         </div>
       )}
 
-      {/* QR code */}
+      {/* QR */}
       <div className="flex justify-center mb-4">
         {!tooBig ? (
           <div className="p-4 bg-white rounded-2xl">
             <QRCodeCanvas
               id="qr-canvas-el"
               value={qrData}
-              size={220}
-              level="L"          // L = lowest correction = most data capacity
+              size={230}
+              level="L"
               marginSize={1}
             />
           </div>
         ) : (
-          <div className="w-[252px] h-[252px] rounded-2xl flex items-center justify-center"
+          <div className="w-[262px] h-[262px] rounded-2xl flex items-center justify-center"
             style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
             <p className="text-xs text-slate-500 text-center px-4">
               Конфиг слишком большой.<br />Скачайте файл и импортируйте вручную.
@@ -107,11 +119,11 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
       {/* Hint */}
       <p className="text-xs text-slate-500 text-center mb-4">
         {mode === "amnezia"
-          ? "AmneziaVPN → + → Сканировать QR-код"
+          ? "AmneziaVPN → + → Добавить туннель → Сканировать QR"
           : "WireGuard → + → Сканировать QR-код"}
       </p>
 
-      {/* Download */}
+      {/* Download QR as PNG */}
       {!tooBig && (
         <button type="button" onClick={downloadQr}
           className="btn-ghost w-full justify-center text-xs">
