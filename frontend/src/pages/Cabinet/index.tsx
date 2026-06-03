@@ -303,12 +303,18 @@ export default function Cabinet() {
     queryKey: ["portal-clients", allIds.join(",")],
     queryFn: async () => {
       const results = await Promise.all(
-        allIds.map(id => api.get(`/portal/client/${id}`).then(r => r.data.client as ClientInfo))
+        allIds.map(id =>
+          api.get(`/portal/client/${id}`)
+            .then(r => r.data.client as ClientInfo)
+            .catch(() => null)
+        )
       );
-      return results;
+      return results.filter(Boolean) as ClientInfo[];
     },
     enabled: allIds.length > 0,
     retry: false,
+    // If data is stale on re-open — re-validate silently
+    staleTime: 2 * 60_000,
   });
 
   async function downloadConfig(id: string, name: string) {

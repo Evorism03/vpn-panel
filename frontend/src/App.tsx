@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuthStore } from "./store/auth";
+import { useSessionGuard } from "./hooks/useSessionGuard";
 import Landing from "./pages/Landing";
 import Cabinet from "./pages/Cabinet";
 import AdminLogin from "./pages/Admin/Login";
@@ -26,6 +27,7 @@ function AdminPage({ children }: { children: JSX.Element }) {
 }
 
 export default function App() {
+  useSessionGuard();
   return (
     <Routes>
       <Route path="/"             element={<Landing />} />
