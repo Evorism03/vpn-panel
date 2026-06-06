@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_admin
-from ..database import Admin, Server, get_db
+from ..database import Admin, Client, Server, get_db
 
 router = APIRouter(prefix="/api/admin/servers", tags=["servers"])
 
@@ -69,6 +69,59 @@ def _server_dict(s: Server, status: str = "unknown") -> dict:
         "is_active": s.is_active, "status": status,
         "created_at": s.created_at.isoformat() if s.created_at else None,
     }
+
+
+# ── Local server settings ─────────────────────────────────────────────────────
+
+def _local_row(db: Session) -> Server | None:
+    return db.query(Server).filter(Server.id == LOCAL_ID).first()
+
+def _local_payload(db: Session, row: Server | None) -> dict:
+    active = db.query(Client).filter(Client.status == "active").count()
+    max_u  = row.max_users if row else 0
+    return {
+        "id": LOCAL_ID,
+        "name": (row.name if row else None) or "Локальный сервер",
+        "max_users": max_u,
+        "active_count": active,
+        "is_full": max_u > 0 and active >= max_u,
+    }
+
+
+class LocalServerUpdate(BaseModel):
+    max_users: int = 0
+    name: Optional[str] = None
+
+
+@router.get("/local")
+def get_local_server(
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    return _local_payload(db, _local_row(db))
+
+
+@router.patch("/local")
+def update_local_server(
+    body: LocalServerUpdate,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    row = _local_row(db)
+    if row is None:
+        row = Server(
+            id=LOCAL_ID, name=body.name or "Локальный сервер",
+            base_url="local", token="",
+            max_users=max(0, body.max_users),
+        )
+        db.add(row)
+    else:
+        row.max_users = max(0, body.max_users)
+        if body.name is not None:
+            row.name = body.name.strip() or row.name
+    db.commit()
+    db.refresh(row)
+    return _local_payload(db, row)
 
 
 # ── CRUD ───────────────────────────────────────────────────────────────────────

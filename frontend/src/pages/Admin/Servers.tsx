@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Trash2, Edit2, RefreshCw, Server, Wifi, WifiOff, Users } from "lucide-react";
+import { Plus, Trash2, Edit2, RefreshCw, Server, Wifi, WifiOff, Users, Settings2 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card } from "../../components/ui/Card";
 import { Spinner } from "../../components/ui/Spinner";
@@ -132,21 +132,7 @@ export default function Servers() {
         <div className="space-y-3">
 
           {/* Local server card */}
-          <Card glow>
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 rounded-xl bg-green-500/15 border border-green-500/20 flex items-center justify-center shrink-0">
-                <Server size={18} className="text-green-400" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <p className="text-sm font-semibold text-white">Локальный сервер</p>
-                  <StatusDot status="online" />
-                </div>
-                <p className="text-xs text-slate-500">AWG · этот сервер</p>
-              </div>
-              <LocalStats />
-            </div>
-          </Card>
+          <LocalServerCard />
 
           {/* Remote servers */}
           {servers.length === 0 ? (
@@ -303,19 +289,118 @@ export default function Servers() {
   );
 }
 
-// ── Local stats widget ─────────────────────────────────────────────────────────
-function LocalStats() {
-  const { data } = useQuery({
-    queryKey: ["admin-stats"],
-    queryFn: async () => (await api.get("/admin/stats")).data,
+// ── Local server card ──────────────────────────────────────────────────────────
+function LocalServerCard() {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [maxInput, setMaxInput] = useState("0");
+  const [saving, setSaving] = useState(false);
+
+  const { data: local, refetch } = useQuery({
+    queryKey: ["local-server"],
+    queryFn: async () => (await api.get("/admin/servers/local")).data,
     staleTime: 15_000,
+    refetchInterval: 30_000,
   });
-  if (!data) return null;
+
+  const active   = local?.active_count ?? 0;
+  const maxUsers = local?.max_users ?? 0;
+  const isFull   = local?.is_full ?? false;
+  const pct      = maxUsers > 0 ? Math.min(100, Math.round((active / maxUsers) * 100)) : null;
+
+  function openEdit() { setMaxInput(String(maxUsers)); setEditing(true); }
+
+  async function saveLimit() {
+    setSaving(true);
+    try {
+      await api.patch("/admin/servers/local", { max_users: parseInt(maxInput) || 0 });
+      await refetch();
+      qc.invalidateQueries({ queryKey: ["admin-stats"] });
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const barColor = pct === null ? "bg-green-500"
+    : pct >= 100 ? "bg-red-500"
+    : pct >= 80  ? "bg-yellow-500"
+    : "bg-green-500";
+
   return (
-    <div className="flex items-center gap-4 text-xs text-slate-400 shrink-0">
-      <span><span className="text-white font-medium">{data.clients?.active ?? 0}</span> активных</span>
-      <span><span className="text-red-400 font-medium">{data.clients?.expired ?? 0}</span> истёкших</span>
-    </div>
+    <Card glow>
+      <div className="flex items-center gap-4">
+        <div className="w-10 h-10 rounded-xl bg-green-500/15 border border-green-500/20 flex items-center justify-center shrink-0">
+          <Server size={18} className="text-green-400" />
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <p className="text-sm font-semibold text-white">{local?.name ?? "Локальный сервер"}</p>
+            <StatusDot status="online" />
+            {isFull && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/15 border border-red-500/30 text-red-400">
+                Заполнен
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-slate-500 mb-2">AWG · этот сервер</p>
+
+          {/* Capacity bar */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-1.5 rounded-full bg-white/8 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+                style={{ width: pct !== null ? `${pct}%` : "0%" }}
+              />
+            </div>
+            <span className="text-xs text-slate-400 shrink-0 tabular-nums">
+              {active}
+              {maxUsers > 0 ? ` / ${maxUsers}` : ""} активных
+            </span>
+          </div>
+        </div>
+
+        <button
+          onClick={openEdit}
+          className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/8 transition-colors shrink-0"
+          title="Настроить лимит"
+        >
+          <Settings2 size={16} />
+        </button>
+      </div>
+
+      {/* Inline edit */}
+      <AnimatePresence>
+        {editing && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="mt-4 pt-4 border-t border-white/8 flex items-end gap-3">
+              <div className="flex-1">
+                <label className="block text-xs text-slate-400 mb-1.5">
+                  Макс. клиентов <span className="text-slate-600">(0 = без лимита)</span>
+                </label>
+                <input
+                  className="input"
+                  type="number" min="0"
+                  value={maxInput}
+                  onChange={e => setMaxInput(e.target.value)}
+                  autoFocus
+                />
+              </div>
+              <button className="btn-ghost px-4 py-2" onClick={() => setEditing(false)}>Отмена</button>
+              <button className="btn-primary px-4 py-2" onClick={saveLimit} disabled={saving}>
+                {saving ? <Spinner className="w-4 h-4" /> : "Сохранить"}
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </Card>
   );
 }
 

@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
-from ..database import Client, Order
+from ..database import Client, Order, Server
 from .. import broadcast as _bc
 from .awg import (
     AWG_WRITE_LOCK,
@@ -22,9 +22,22 @@ cfg = get_settings()
 
 # ── Client creation ────────────────────────────────────────────────────────────
 
+def check_local_capacity(db: Session):
+    """Raise 429 if local server has a max_users limit and it's reached."""
+    local = db.query(Server).filter(Server.id == "local").first()
+    if local and local.max_users > 0:
+        active = db.query(Client).filter(Client.status == "active").count()
+        if active >= local.max_users:
+            raise HTTPException(
+                429,
+                f"Сервер заполнен: максимум {local.max_users} активных клиентов"
+            )
+
+
 def create_client(db: Session, name: str, term: str, contact: str = "",
                   expires_at: Optional[str] = None) -> dict:
     term = normalize_term(term)
+    check_local_capacity(db)
 
     # Generate keys first (outside lock — awg genkey is slow in real mode)
     private_key = awg(["genkey"])
