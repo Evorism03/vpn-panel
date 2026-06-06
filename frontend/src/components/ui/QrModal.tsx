@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { Download } from "lucide-react";
 import { Modal } from "./Modal";
@@ -12,6 +12,9 @@ interface Props {
 
 type QrMode = "awg" | "wg";
 
+const CHUNK_SIZE   = 1200;   // chars per QR frame
+const FRAME_MS     = 750;    // ms per frame
+
 // ── Очистка конфига от комментариев ───────────────────────────────────────────
 function stripComments(cfg: string): string {
   return cfg
@@ -22,15 +25,12 @@ function stripComments(cfg: string): string {
     .trim();
 }
 
-// ── AWG параметры которые не понимает стандартный WireGuard ───────────────────
 const AWG_PARAMS = /^(Jc|Jmin|Jmax|S1|S2|S3|S4|H1|H2|H3|H4|I1|I2|I3|I4|I5)\s*=/;
 
-// Режим AmneziaWG — .conf с AWG параметрами (то же что импорт файла в AmneziaVPN)
 function buildAwgData(config: string): string {
   return stripComments(config);
 }
 
-// Режим WireGuard — .conf без AWG параметров
 function buildWgData(config: string): string {
   return stripComments(config)
     .split("\n")
@@ -40,17 +40,45 @@ function buildWgData(config: string): string {
     .trim();
 }
 
-export function QrModal({ open, onClose, config, clientName }: Props) {
-  const [mode, setMode]     = useState<QrMode>("awg");
-  const [qrData, setQrData] = useState("");
+// Разбить строку на чанки с префиксом "N/TOTAL\n"
+function makeFrames(data: string): string[] {
+  const chunks: string[] = [];
+  for (let i = 0; i < data.length; i += CHUNK_SIZE) {
+    chunks.push(data.slice(i, i + CHUNK_SIZE));
+  }
+  const total = chunks.length;
+  return chunks.map((chunk, idx) =>
+    total > 1 ? `${idx + 1}/${total}\n${chunk}` : chunk
+  );
+}
 
+export function QrModal({ open, onClose, config, clientName }: Props) {
+  const [mode, setMode]       = useState<QrMode>("awg");
+  const [frames, setFrames]   = useState<string[]>([]);
+  const [frameIdx, setFrameIdx] = useState(0);
+  const timerRef              = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Пересчёт кадров при смене конфига или режима
   useEffect(() => {
-    if (!open || !config) { setQrData(""); return; }
-    setQrData(mode === "awg" ? buildAwgData(config) : buildWgData(config));
+    if (!open || !config) { setFrames([]); setFrameIdx(0); return; }
+    const data = mode === "awg" ? buildAwgData(config) : buildWgData(config);
+    setFrames(makeFrames(data));
+    setFrameIdx(0);
   }, [open, mode, config]);
 
-  const tooBig  = qrData.length > 2900;
-  const charLen = qrData.length;
+  // Анимация кадров
+  useEffect(() => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (frames.length <= 1) return;
+    timerRef.current = setInterval(() => {
+      setFrameIdx(i => (i + 1) % frames.length);
+    }, FRAME_MS);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [frames]);
+
+  const currentFrame = frames[frameIdx] ?? "";
+  const isAnimated   = frames.length > 1;
+  const charLen      = (mode === "awg" ? buildAwgData(config) : buildWgData(config)).length;
 
   function downloadQr() {
     const canvas = document.getElementById("qr-canvas-el") as HTMLCanvasElement | null;
@@ -64,7 +92,7 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
   return (
     <Modal open={open} onClose={onClose} title="QR-код подключения" size="sm">
 
-      {/* Переключатель */}
+      {/* Переключатель режима */}
       <div className="flex rounded-xl p-0.5 mb-5"
         style={{ background: "rgba(255,255,255,0.05)" }}>
         {([
@@ -81,46 +109,58 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
         ))}
       </div>
 
-      {tooBig ? (
-        <div className="mb-4 px-3 py-2 rounded-xl text-xs text-red-400"
-          style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}>
-          ⚠ Конфиг слишком большой для QR ({charLen} символов). Скачайте .conf файл.
-        </div>
-      ) : (
-        <div className="mb-4 px-3 py-1.5 rounded-xl text-xs text-slate-500 text-center"
-          style={{ background: "rgba(255,255,255,0.03)" }}>
-          Размер данных: {charLen} симв.
-        </div>
-      )}
+      {/* Инфо-строка */}
+      <div className="mb-4 px-3 py-1.5 rounded-xl text-xs text-center"
+        style={{
+          background: isAnimated ? "rgba(99,102,241,0.08)" : "rgba(255,255,255,0.03)",
+          border: isAnimated ? "1px solid rgba(99,102,241,0.25)" : "none",
+          color: isAnimated ? "#a5b4fc" : "#64748b",
+        }}>
+        {isAnimated
+          ? `Анимированный QR • ${frames.length} кадра • ${charLen} симв.`
+          : `Размер данных: ${charLen} симв.`}
+      </div>
 
       {/* QR */}
-      <div className="flex justify-center mb-4">
-        {!tooBig && qrData ? (
+      <div className="flex justify-center mb-3">
+        {currentFrame ? (
           <div className="p-4 bg-white rounded-2xl inline-block">
             <QRCodeCanvas
               id="qr-canvas-el"
-              value={qrData}
+              value={currentFrame}
               size={280}
               level="M"
               marginSize={2}
             />
           </div>
-        ) : tooBig ? (
-          <div className="w-[312px] h-[60px] rounded-xl flex items-center justify-center"
-            style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-            <p className="text-xs text-slate-500">Слишком большой — скачайте .conf файл</p>
-          </div>
         ) : null}
       </div>
+
+      {/* Индикатор кадра */}
+      {isAnimated && (
+        <div className="flex justify-center gap-1.5 mb-3">
+          {frames.map((_, i) => (
+            <div key={i}
+              className="rounded-full transition-all duration-200"
+              style={{
+                width: i === frameIdx ? 20 : 6,
+                height: 6,
+                background: i === frameIdx ? "#818cf8" : "rgba(255,255,255,0.15)",
+              }}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Подсказка */}
       <p className="text-xs text-slate-500 text-center mb-4">
         {mode === "awg"
           ? "AmneziaVPN → + → Добавить туннель → Сканировать QR"
           : "WireGuard → + → Сканировать QR-код"}
+        {isAnimated && <><br /><span className="text-indigo-400">Держите камеру — код сканируется автоматически</span></>}
       </p>
 
-      {!tooBig && qrData && (
+      {!isAnimated && currentFrame && (
         <button type="button" onClick={downloadQr}
           className="btn-ghost w-full justify-center text-xs">
           <Download size={14} /> Сохранить QR как PNG

@@ -35,6 +35,7 @@ FRONTEND_CONTAINER="${FRONTEND_CONTAINER:-vpn-panel-frontend}"
 SKIP_DOCKER_INSTALL="${SKIP_DOCKER_INSTALL:-0}"
 FORCE_PORT="${FORCE_PORT:-0}"
 ACTION_MODE="${ACTION_MODE:-}"
+INSTALL_MODE="${INSTALL_MODE:-}"   # panel | agent
 
 STEP_N=0
 STEP_TOTAL=5
@@ -643,6 +644,212 @@ print_summary() {
   printf "  ${BGN}╚══════════════════════════════════════════════════╝${R}\n\n"
 }
 
+# ─── Install mode selector ────────────────────────────────────────────────────
+select_install_mode() {
+  # Skip if already set via env var or not interactive
+  [ -n "$INSTALL_MODE" ] && return 0
+  [ -t 0 ] && [ "${INTERACTIVE:-1}" != "0" ] || { INSTALL_MODE="panel"; return; }
+
+  printf "  ${BCY}╔══════════════════════════════════════════════════╗${R}\n"
+  printf "  ${BCY}║${R}  ${B}Выберите режим установки${R}                         ${BCY}║${R}\n"
+  printf "  ${BCY}╠══════════════════════════════════════════════════╣${R}\n"
+  printf "  ${BCY}║${R}  ${BCY}1${R}  ${B}Главная панель${R}  ${DIM}фронтенд + бэкенд, полный UI${R}\n"
+  printf "  ${BCY}║${R}  ${BCY}2${R}  ${B}Агент (доп. сервер)${R}  ${DIM}только бэкенд, добавляется${R}\n"
+  printf "  ${BCY}║${R}     ${DIM}в главную панель через Серверы → Добавить${R}\n"
+  printf "  ${BCY}╚══════════════════════════════════════════════════╝${R}\n"
+  printf "\n  ${B}Choice${R}  ${DIM}[${CY}1${DIM}]${R}  "
+  local _ans; read -r _ans
+  case "${_ans:-1}" in
+    2) INSTALL_MODE="agent" ;;
+    *) INSTALL_MODE="panel" ;;
+  esac
+  printf "\n"
+}
+
+# ─── Agent wizard (shorter — no pricing/lava/panel_name) ─────────────────────
+wizard_agent() {
+  [ -t 0 ] && [ "${INTERACTIVE:-1}" != "0" ] || return 0
+
+  step "Конфигурация агента"
+
+  local _ip="$_DETECTED_IP"
+  local _awg="$_DETECTED_AWG_CONTAINER"
+  local _wgp="$_DETECTED_AWG_PORT"
+
+  printf "  ${DIM}┌──────────────────────────────────────────────────┐${R}\n"
+  printf "  ${DIM}│${R}  ${IT}${DIM}Press Enter to accept the default in brackets${R}     ${DIM}│${R}\n"
+  printf "  ${DIM}├──────────────────────────────────────────────────┤${R}\n"
+  printf "  ${DIM}│${R}  ${DIM}Сервер${R}\n"
+
+  _prompt "Public IP"          "$_ip";              SERVER_IP="$_ANS"
+  _prompt "Backend port"       "$BACKEND_PORT";     BACKEND_PORT="$_ANS"
+
+  printf "  ${DIM}│${R}\n"
+  printf "  ${DIM}│${R}  ${DIM}AmneziaWG${R}\n"
+
+  _prompt "AWG container"      "${_awg:-amnezia-awg}"; AWG_DOCKER_CONTAINER="$_ANS"
+  _prompt "AWG UDP port"       "${_wgp:-?}";            AWG_PORT="$_ANS"
+
+  printf "  ${DIM}│${R}\n"
+  printf "  ${DIM}│${R}  ${DIM}Доступ${R}\n"
+
+  _prompt "Max clients (0=∞)"  "0";                 MAX_USERS_AGENT="$_ANS"
+
+  printf "  ${DIM}└──────────────────────────────────────────────────┘${R}\n\n"
+
+  # Agent backend must be reachable from the network
+  BACKEND_BIND="0.0.0.0"
+}
+
+# ─── Write .env for agent (no frontend, no pricing, no lava) ─────────────────
+write_env_agent() {
+  local env_path="$INSTALL_DIR/.env"
+
+  if [ -f "$env_path" ]; then
+    log_info "Existing config preserved"
+    chmod 600 "$env_path"
+    return
+  fi
+
+  step "Создание конфигурации агента"
+
+  local awg_container="$_DETECTED_AWG_CONTAINER"
+  local awg_port="$_DETECTED_AWG_PORT"
+  local server_ip="$_DETECTED_IP"
+  local awg_config_path="$_DETECTED_AWG_CONFIG"
+
+  [ -n "$awg_container" ]   || fail "AmneziaWG container not found."
+  [ -n "$awg_config_path" ] || fail "AWG config not found in container '$awg_container'."
+
+  log_dim "Container  →  $awg_container"
+  log_dim "Public IP  →  $server_ip"
+  log_dim "AWG config →  $awg_config_path"
+
+  local awg_iface="${AWG_INTERFACE:-$(iface_from_path "$awg_config_path")}"
+  local server_endpoint="${SERVER_ENDPOINT:-}"
+  [ -z "$server_endpoint" ] && [ -n "$awg_port" ] && server_endpoint="$server_ip:$awg_port"
+  [ -n "$server_endpoint" ] || server_endpoint="$server_ip:"
+
+  local secret_key; secret_key="$(gen_secret)"
+  local admin_password; admin_password="$(gen_secret | cut -c1-20)"
+
+  cat > "$env_path" <<EOF
+# ── Auth ──────────────────────────────────────────────────────────────────────
+SECRET_KEY=$secret_key
+ACCESS_TOKEN_EXPIRE_MINUTES=60
+REFRESH_TOKEN_EXPIRE_DAYS=30
+ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+ADMIN_PASSWORD=$admin_password
+
+# ── AWG ───────────────────────────────────────────────────────────────────────
+AWG_CONFIG_PATH=${AWG_CONFIG_PATH:-$awg_config_path}
+AWG_INTERFACE=$awg_iface
+AWG_BIN=${AWG_BIN:-awg}
+AWG_DOCKER_CONTAINER=$awg_container
+AWG_CONTAINER_CONFIG_PATH=$awg_config_path
+MOCK_AWG=false
+
+# ── Client defaults ───────────────────────────────────────────────────────────
+SERVER_ENDPOINT=$server_endpoint
+CLIENT_DNS=${CLIENT_DNS:-1.1.1.1}
+CLIENT_ALLOWED_IPS=${CLIENT_ALLOWED_IPS:-0.0.0.0/0,::/0}
+CLIENT_PERSISTENT_KEEPALIVE=${CLIENT_PERSISTENT_KEEPALIVE:-25}
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+DATA_DIR=/data
+DB_PATH=/data/vpn.db
+
+# ── Agent mode (no shop/lava) ─────────────────────────────────────────────────
+LAVA_API_KEY=
+LAVA_SHOP_ID=
+PRICE_1M=0
+PRICE_3M=0
+PRICE_6M=0
+PRICE_1Y=0
+PANEL_NAME=Agent
+EOF
+  chmod 600 "$env_path"
+  log "Config written  ${DIM}→ $env_path${R}"
+}
+
+# ─── Start agent (backend only, bound to 0.0.0.0) ────────────────────────────
+start_agent() {
+  step "Запуск агента"
+  docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 \
+    || docker network create "$NETWORK_NAME" >/dev/null
+  docker rm -f "$BACKEND_CONTAINER" >/dev/null 2>&1 || true
+
+  local _log; _log="$(mktemp)"
+  spin_start "Building backend image…"
+  docker build -t vpn-panel-backend "$INSTALL_DIR/backend" >"$_log" 2>&1 || {
+    spin_stop; cat "$_log" >&2; rm -f "$_log"; fail "Backend build failed"; }
+  spin_stop; rm -f "$_log"; log "Backend image built"
+
+  docker run -d --name "$BACKEND_CONTAINER" --restart unless-stopped \
+    --network "$NETWORK_NAME" --network-alias backend \
+    --env-file "$INSTALL_DIR/.env" \
+    -v "$INSTALL_DIR/data:/data" \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -p "${BACKEND_BIND:-0.0.0.0}:$BACKEND_PORT:8090" \
+    vpn-panel-backend >/dev/null
+  log "Agent running  ${DIM}→ 0.0.0.0:$BACKEND_PORT${R}"
+}
+
+# ─── Healthcheck agent ────────────────────────────────────────────────────────
+healthcheck_agent() {
+  step "Health check"
+  spin_start "Waiting for backend…"
+  local attempt=0 delay="0.3" elapsed="0"
+  while true; do
+    attempt=$(( attempt + 1 ))
+    if curl -fsS "http://127.0.0.1:$BACKEND_PORT/api/health" >/dev/null 2>&1 \
+      || wget -q -O /dev/null "http://127.0.0.1:$BACKEND_PORT/api/health" 2>/dev/null; then
+      spin_stop; log "Backend  ${BGN}online${R}  ${DIM}(~${elapsed}s)${R}"; break
+    fi
+    [ "$attempt" -ge 50 ] && {
+      spin_stop; docker logs --tail 40 "$BACKEND_CONTAINER" >&2 || true
+      fail "Backend did not start in time"
+    }
+    sleep "$delay"
+    elapsed="$(awk "BEGIN{printf \"%.0f\", $elapsed + $delay}")"
+    delay="$(awk "BEGIN{d=$delay*1.4; print (d>2)?2:d}")"
+  done
+}
+
+# ─── Summary agent ────────────────────────────────────────────────────────────
+print_summary_agent() {
+  local token;      token="$(env_value SECRET_KEY)"
+  local endpoint;   endpoint="$(env_value SERVER_ENDPOINT)"
+  local awg_cont;   awg_cont="$(env_value AWG_DOCKER_CONTAINER)"
+  local server_ip;  server_ip="$(detect_public_ip)"
+  local agent_url="http://$server_ip:$BACKEND_PORT"
+
+  printf "\n"
+  printf "  ${BGN}╔══════════════════════════════════════════════════╗${R}\n"
+  printf "  ${BGN}║${R}  ${BGN}✓${R}  ${WH}Агент установлен!${R}                             ${BGN}║${R}\n"
+  printf "  ${BGN}╠══════════════════════════════════════════════════╣${R}\n"
+  printf "  ${BGN}║${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}ДОБАВИТЬ В ГЛАВНУЮ ПАНЕЛЬ${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}───────────────────────────────────────────${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}Серверы → Добавить сервер${R}\n"
+  printf "  ${BGN}║${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}Panel URL ${R}  ${BCY}%s${R}\n"  "$agent_url"
+  printf "  ${BGN}║${R}   ${DIM}Token     ${R}  ${BYL}%s${R}\n"  "$token"
+  printf "  ${BGN}║${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}AWG${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}───────────────────────────────────────────${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}Endpoint  ${R}  %s\n"            "$endpoint"
+  printf "  ${BGN}║${R}   ${DIM}Container ${R}  %s\n"            "$awg_cont"
+  printf "  ${BGN}║${R}\n"
+  printf "  ${BGN}╠══════════════════════════════════════════════════╣${R}\n"
+  printf "  ${BGN}║${R}  ${BYL}⚠${R}  ${YL}Открой порт $BACKEND_PORT в firewall!${R}\n"
+  printf "  ${BGN}║${R}  ${DIM}ufw allow $BACKEND_PORT/tcp${R}\n"
+  printf "  ${BGN}╠══════════════════════════════════════════════════╣${R}\n"
+  printf "  ${BGN}║${R}  ${DIM}Config:  nano %s/.env${R}\n"  "$INSTALL_DIR"
+  printf "  ${BGN}║${R}  ${DIM}Logs:    docker logs -f %s${R}\n" "$BACKEND_CONTAINER"
+  printf "  ${BGN}╚══════════════════════════════════════════════════╝${R}\n\n"
+}
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 main() {
   banner
@@ -654,6 +861,22 @@ main() {
   detect_environment
   spin_stop
 
+  # Choose panel vs agent (only on fresh install or if INSTALL_MODE unset)
+  [ -d "$INSTALL_DIR/backend" ] || select_install_mode
+
+  # ── Agent mode ──────────────────────────────────────────────────────────────
+  if [ "${INSTALL_MODE:-panel}" = "agent" ]; then
+    [ -d "$INSTALL_DIR/backend" ] || true  # agents can be updated too
+    wizard_agent
+    copy_project
+    write_env_agent
+    start_agent
+    healthcheck_agent
+    print_summary_agent
+    return
+  fi
+
+  # ── Panel mode (default) ────────────────────────────────────────────────────
   select_action
 
   case "$ACTION_MODE" in
