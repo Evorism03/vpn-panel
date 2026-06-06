@@ -12,8 +12,9 @@ interface Props {
 
 type QrMode = "awg" | "wg";
 
-const CHUNK_SIZE   = 400;    // chars per QR frame
-const FRAME_MS     = 2000;   // ms per frame
+const FRAME_MS    = 2000;   // ms per frame
+const CHUNK_BYTES = 600;    // raw bytes per chunk (fits comfortably in one QR)
+const QR_MAGIC    = [0x07, 0xC0]; // AmneziaVPN qrMagicCode (qint16)
 
 // ── Очистка конфига от комментариев ───────────────────────────────────────────
 function stripComments(cfg: string): string {
@@ -40,30 +41,86 @@ function buildWgData(config: string): string {
     .trim();
 }
 
-// Разбить строку на чанки с префиксом "N/TOTAL\n"
-function makeFrames(data: string): string[] {
-  const chunks: string[] = [];
-  for (let i = 0; i < data.length; i += CHUNK_SIZE) {
-    chunks.push(data.slice(i, i + CHUNK_SIZE));
+// ── Qt qCompress: [4B BE uncompressed_size] + zlib_deflate(data) ──────────────
+async function qCompress(text: string): Promise<Uint8Array> {
+  const encoder = new TextEncoder();
+  const raw = encoder.encode(text);
+
+  // CompressionStream('deflate') = zlib format (78 9C header) matching Qt qCompress
+  const cs = new CompressionStream("deflate");
+  const writer = cs.writable.getWriter();
+  writer.write(raw);
+  writer.close();
+
+  const compressedBuf = await new Response(cs.readable).arrayBuffer();
+  const compressed = new Uint8Array(compressedBuf);
+
+  const out = new Uint8Array(4 + compressed.length);
+  new DataView(out.buffer).setUint32(0, raw.length, false); // big-endian
+  out.set(compressed, 4);
+  return out;
+}
+
+// ── Бинарный фрейм AmneziaVPN: magic + total + id + size + chunk ─────────────
+function buildAmneziaFrames(compressed: Uint8Array): string[] {
+  // Split compressed bytes into chunks
+  const chunks: Uint8Array[] = [];
+  for (let i = 0; i < compressed.length; i += CHUNK_BYTES) {
+    chunks.push(compressed.slice(i, i + CHUNK_BYTES));
   }
   const total = chunks.length;
-  return chunks.map((chunk, idx) =>
-    total > 1 ? `${idx + 1}/${total}\n${chunk}` : chunk
-  );
+
+  return chunks.map((chunk, id) => {
+    // Frame layout: magic(2) + total(1) + id(1) + chunk_size(4) + chunk_data
+    const frame = new Uint8Array(8 + chunk.length);
+    frame[0] = QR_MAGIC[0];
+    frame[1] = QR_MAGIC[1];
+    frame[2] = total;
+    frame[3] = id;
+    new DataView(frame.buffer).setUint32(4, chunk.length, false); // uint32 BE
+    frame.set(chunk, 8);
+
+    // Base64url, no padding
+    let bin = "";
+    frame.forEach(b => { bin += String.fromCharCode(b); });
+    return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+  });
+}
+
+// ── Fallback: plain text в base64 (для WG или если CompressionStream нет) ────
+function buildPlainFrames(text: string): string[] {
+  return [text]; // single static QR
 }
 
 export function QrModal({ open, onClose, config, clientName }: Props) {
-  const [mode, setMode]       = useState<QrMode>("awg");
-  const [frames, setFrames]   = useState<string[]>([]);
+  const [mode, setMode]         = useState<QrMode>("awg");
+  const [frames, setFrames]     = useState<string[]>([]);
   const [frameIdx, setFrameIdx] = useState(0);
-  const timerRef              = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [loading, setLoading]   = useState(false);
+  const timerRef                = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Пересчёт кадров при смене конфига или режима
+  // Строим фреймы при открытии или смене режима
   useEffect(() => {
     if (!open || !config) { setFrames([]); setFrameIdx(0); return; }
-    const data = mode === "awg" ? buildAwgData(config) : buildWgData(config);
-    setFrames(makeFrames(data));
-    setFrameIdx(0);
+
+    const text = mode === "awg" ? buildAwgData(config) : buildWgData(config);
+
+    if (mode === "awg" && typeof CompressionStream !== "undefined") {
+      setLoading(true);
+      qCompress(text).then(compressed => {
+        setFrames(buildAmneziaFrames(compressed));
+        setFrameIdx(0);
+        setLoading(false);
+      }).catch(() => {
+        // Fallback to plain text if compression fails
+        setFrames(buildPlainFrames(text));
+        setFrameIdx(0);
+        setLoading(false);
+      });
+    } else {
+      setFrames(buildPlainFrames(text));
+      setFrameIdx(0);
+    }
   }, [open, mode, config]);
 
   // Анимация кадров
@@ -78,7 +135,6 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
 
   const currentFrame = frames[frameIdx] ?? "";
   const isAnimated   = frames.length > 1;
-  const charLen      = (mode === "awg" ? buildAwgData(config) : buildWgData(config)).length;
 
   function downloadQr() {
     const canvas = document.getElementById("qr-canvas-el") as HTMLCanvasElement | null;
@@ -116,14 +172,21 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
           border: isAnimated ? "1px solid rgba(99,102,241,0.25)" : "none",
           color: isAnimated ? "#a5b4fc" : "#64748b",
         }}>
-        {isAnimated
-          ? `Анимированный QR • ${frames.length} кадра • ${charLen} симв.`
-          : `Размер данных: ${charLen} симв.`}
+        {loading
+          ? "Сжатие данных..."
+          : isAnimated
+            ? `Анимированный QR • ${frames.length} кадра`
+            : `Статичный QR • AmneziaVPN формат`}
       </div>
 
       {/* QR */}
       <div className="flex justify-center mb-3">
-        {currentFrame ? (
+        {loading ? (
+          <div className="w-[312px] h-[312px] rounded-2xl flex items-center justify-center"
+            style={{ background: "rgba(255,255,255,0.04)" }}>
+            <p className="text-xs text-slate-500">Генерация...</p>
+          </div>
+        ) : currentFrame ? (
           <div className="p-4 bg-white rounded-2xl inline-block">
             <QRCodeCanvas
               key={frameIdx}
@@ -161,7 +224,7 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
         {isAnimated && <><br /><span className="text-indigo-400">Держите камеру — код сканируется автоматически</span></>}
       </p>
 
-      {!isAnimated && currentFrame && (
+      {!isAnimated && !loading && currentFrame && (
         <button type="button" onClick={downloadQr}
           className="btn-ghost w-full justify-center text-xs">
           <Download size={14} /> Сохранить QR как PNG
