@@ -3,12 +3,18 @@ set -Eeuo pipefail
 
 # ─── Colours ──────────────────────────────────────────────────────────────────
 if [ -t 1 ] && [ "${NO_COLOR:-}" = "" ]; then
-  R='\033[0m' B='\033[1m' D='\033[2m'
-  GN='\033[0;32m' BGN='\033[1;32m'
-  CY='\033[0;36m' BCY='\033[1;36m'
-  YL='\033[1;33m' RE='\033[0;31m' BRE='\033[1;31m'
+  R='\033[0m'
+  B='\033[1m'       DIM='\033[2m'     IT='\033[3m'
+  GN='\033[0;32m'   BGN='\033[1;32m'
+  CY='\033[0;36m'   BCY='\033[1;36m'
+  BL='\033[0;34m'   BBL='\033[1;34m'
+  MG='\033[0;35m'   BMG='\033[1;35m'
+  YL='\033[0;33m'   BYL='\033[1;33m'
+  RE='\033[0;31m'   BRE='\033[1;31m'
+  WH='\033[1;37m'
 else
-  R=''; B=''; D=''; GN=''; BGN=''; CY=''; BCY=''; YL=''; RE=''; BRE=''
+  R=''; B=''; DIM=''; IT=''; GN=''; BGN=''; CY=''; BCY=''
+  BL=''; BBL=''; MG=''; BMG=''; YL=''; BYL=''; RE=''; BRE=''; WH=''
 fi
 
 # ─── Defaults ─────────────────────────────────────────────────────────────────
@@ -31,23 +37,42 @@ FORCE_PORT="${FORCE_PORT:-0}"
 ACTION_MODE="${ACTION_MODE:-}"
 
 STEP_N=0
+STEP_TOTAL=5
 _SPIN_PID=''
 
+# ─── Detection cache (populated once by detect_environment) ───────────────────
+_DETECTED_IP=""
+_DETECTED_AWG_CONTAINER=""
+_DETECTED_AWG_PORT=""
+_DETECTED_AWG_CONFIG=""
+
 # ─── Logging ──────────────────────────────────────────────────────────────────
-log()      { printf "  ${BGN}▶${R}  ${B}%s${R}\n" "$*"; }
-log_ok()   { printf "  ${BGN}✓${R}  %s\n" "$*"; }
-log_dim()  { printf "  ${D}   %s${R}\n" "$*"; }
-log_warn() { printf "  ${YL}⚠${R}  %s\n" "$*"; }
+log()      { printf "     ${BGN}✓${R}  %s\n" "$*"; }
+log_dim()  { printf "     ${DIM}·  %s${R}\n" "$*"; }
+log_warn() { printf "     ${BYL}⚠${R}  ${YL}%s${R}\n" "$*"; }
+log_info() { printf "     ${BCY}→${R}  %s\n" "$*"; }
 
 step() {
   STEP_N=$(( STEP_N + 1 ))
-  printf "\n  ${BCY}${B}◈  Step %d  —  %s${R}\n" "$STEP_N" "$*"
-  printf "  ${D}──────────────────────────────────────────────────${R}\n\n"
+  local bar="" i=1
+  while [ "$i" -le "$STEP_TOTAL" ]; do
+    if   [ "$i" -lt  "$STEP_N" ]; then bar="${bar}${BGN}━${R}"
+    elif [ "$i" -eq "$STEP_N" ]; then bar="${bar}${BCY}●${R}"
+    else bar="${bar}${DIM}─${R}"; fi
+    i=$(( i + 1 ))
+  done
+  printf "\n"
+  printf "  ${DIM}┌─────────────────────────────────────────────────┐${R}\n"
+  printf "  ${DIM}│${R}  ${bar}  ${DIM}%d/%d${R}  ${B}%s${R}\n" "$STEP_N" "$STEP_TOTAL" "$*"
+  printf "  ${DIM}└─────────────────────────────────────────────────┘${R}\n\n"
 }
 
 fail() {
   spin_stop 2>/dev/null || true
-  printf "\n  ${BRE}${B}✗  ERROR:${R}  ${RE}%s${R}\n\n" "$*" >&2
+  printf "\n"
+  printf "  ${BRE}┌─ ERROR ──────────────────────────────────────────┐${R}\n"
+  printf "  ${BRE}│${R}  ${RE}%s${R}\n" "$*"
+  printf "  ${BRE}└──────────────────────────────────────────────────┘${R}\n\n"
   exit 1
 }
 
@@ -57,7 +82,7 @@ spin_start() {
   local msg="${1:-}"
   ( local -a f=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏'); local n=0
     while true; do
-      printf "\r  \033[36m%s\033[0m  %s  " "${f[$n]}" "$msg"
+      printf "\r     ${BCY}%s${R}  ${DIM}%s${R}   " "${f[$n]}" "$msg"
       n=$(( (n+1) % 10 )); sleep 0.1
     done ) &
   _SPIN_PID=$!
@@ -76,12 +101,19 @@ trap 'spin_stop 2>/dev/null || true' EXIT
 # ─── Banner ───────────────────────────────────────────────────────────────────
 banner() {
   printf "\n"
-  printf "  ${BCY}╔════════════════════════════════════════════╗${R}\n"
-  printf "  ${BCY}║${R}                                            ${BCY}║${R}\n"
-  printf "  ${BCY}║${R}    ${B}◈  VPN Panel  ·  Installer${R}             ${BCY}║${R}\n"
-  printf "  ${BCY}║${R}    ${D}AmneziaWG · Multi-admin · Lava${R}          ${BCY}║${R}\n"
-  printf "  ${BCY}║${R}                                            ${BCY}║${R}\n"
-  printf "  ${BCY}╚════════════════════════════════════════════╝${R}\n\n"
+  printf "  ${BCY}╔══════════════════════════════════════════════════╗${R}\n"
+  printf "  ${BCY}║${R}                                                  ${BCY}║${R}\n"
+  printf "  ${BCY}║${R}    ${WH}  ██╗   ██╗██████╗ ███╗   ██╗${R}               ${BCY}║${R}\n"
+  printf "  ${BCY}║${R}    ${WH}  ██║   ██║██╔══██╗████╗  ██║${R}               ${BCY}║${R}\n"
+  printf "  ${BCY}║${R}    ${WH}  ██║   ██║██████╔╝██╔██╗ ██║${R}               ${BCY}║${R}\n"
+  printf "  ${BCY}║${R}    ${WH}  ╚██╗ ██╔╝██╔═══╝ ██║╚██╗██║${R}               ${BCY}║${R}\n"
+  printf "  ${BCY}║${R}    ${WH}   ╚████╔╝ ██║     ██║ ╚████║${R}               ${BCY}║${R}\n"
+  printf "  ${BCY}║${R}    ${WH}    ╚═══╝  ╚═╝     ╚═╝  ╚═══╝${R}               ${BCY}║${R}\n"
+  printf "  ${BCY}║${R}                                                  ${BCY}║${R}\n"
+  printf "  ${BCY}║${R}    ${DIM}AmneziaWG  ·  Multi-admin  ·  Lava Pay${R}       ${BCY}║${R}\n"
+  printf "  ${BCY}║${R}    ${BCY}Installer${R} ${DIM}v2${R}                                  ${BCY}║${R}\n"
+  printf "  ${BCY}║${R}                                                  ${BCY}║${R}\n"
+  printf "  ${BCY}╚══════════════════════════════════════════════════╝${R}\n\n"
 }
 
 require_root() {
@@ -93,7 +125,7 @@ have_cmd() { command -v "$1" >/dev/null 2>&1; }
 # ─── Docker ───────────────────────────────────────────────────────────────────
 install_docker_if_missing() {
   if have_cmd docker; then
-    log_ok "Docker: $(docker --version 2>/dev/null | head -1)"
+    log "Docker $(docker --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1)"
     return
   fi
   [ "$SKIP_DOCKER_INSTALL" = "1" ] && fail "Docker missing. Install it first."
@@ -112,10 +144,10 @@ $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
       && apt-get update -qq \
       && apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin \
       && systemctl enable --now docker \
-      && log_ok "Docker CE installed" && return
+      && log "Docker CE installed" && return
   fi
   apt-get install -y -qq docker.io && systemctl enable --now docker
-  log_ok "Docker installed"
+  log "Docker installed"
 }
 
 compose_cmd() {
@@ -145,49 +177,101 @@ check_ports() {
 }
 
 # ─── Detection ────────────────────────────────────────────────────────────────
-detect_awg_container() {
-  [ -n "${AWG_DOCKER_CONTAINER:-}" ] && { printf '%s' "$AWG_DOCKER_CONTAINER"; return; }
-  docker ps --format '{{.Names}}' | grep -E 'amnezia.*awg|^awg[0-9]*$|^awg[-_]' | grep -Ev '^vpn-panel' | head -1 || true
-}
-
-detect_udp_port() {
-  [ -n "${AWG_PORT:-}" ] && { printf '%s' "$AWG_PORT"; return; }
-  docker port "$1" 2>/dev/null | awk -F: '/udp/ {print $NF; exit}' || true
-}
-
 _valid_ipv4() { printf '%s' "$1" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; }
 
-detect_public_ip() {
-  [ -n "${SERVER_IP:-}" ] && { printf '%s' "$SERVER_IP"; return; }
-  local ip=""
-  for svc in "https://api.ipify.org" "https://ifconfig.me" "https://icanhazip.com"; do
-    if have_cmd curl; then
-      ip="$(curl -s --connect-timeout 4 --max-time 6 "$svc" 2>/dev/null | tr -d '[:space:]' || true)"
-    elif have_cmd wget; then
-      ip="$(wget -qO- --timeout=6 "$svc" 2>/dev/null | tr -d '[:space:]' || true)"
-    fi
-    _valid_ipv4 "$ip" && { printf '%s' "$ip"; return; }
-  done
-  ip="$(ip route get 1.1.1.1 2>/dev/null | awk '/src/{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1);exit}}')"
-  _valid_ipv4 "$ip" || ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
-  printf '%s' "${ip:-127.0.0.1}"
+# Fetch IP from one service into a file (runs in background)
+_fetch_ip_to_file() {
+  local svc="$1" out="$2" ip=""
+  if have_cmd curl; then
+    ip="$(curl -s --connect-timeout 3 --max-time 4 "$svc" 2>/dev/null | tr -d '[:space:]' || true)"
+  elif have_cmd wget; then
+    ip="$(wget -qO- --timeout=4 "$svc" 2>/dev/null | tr -d '[:space:]' || true)"
+  fi
+  _valid_ipv4 "$ip" && printf '%s' "$ip" > "$out" || true
 }
 
-detect_awg_config_path() {
-  local container="$1" iface="${AWG_INTERFACE:-awg0}"
-  [ -n "${AWG_CONTAINER_CONFIG_PATH:-}" ] && { printf '%s' "$AWG_CONTAINER_CONFIG_PATH"; return; }
-  docker exec "$container" sh -c '
-    for p in \
-      "/opt/amnezia/awg/$1.conf" "/opt/amnezia/amneziawg/$1.conf" \
-      "/etc/amnezia/amneziawg/$1.conf" "/etc/wireguard/$1.conf" \
-      "/config/$1.conf" "/opt/amnezia/awg/awg0.conf" \
-      "/etc/wireguard/awg0.conf" "/etc/wireguard/wg0.conf"; do
-      [ -f "$p" ] && printf "%s" "$p" && exit 0
+# Run all detections in parallel and populate _DETECTED_* globals.
+# Called once at startup — wizard and write_env read the cached values.
+detect_environment() {
+  local tmp; tmp="$(mktemp -d)"
+
+  # ── IP: race all three services simultaneously ─────────────────────────────
+  _fetch_ip_to_file "https://api.ipify.org"   "$tmp/ip1" &
+  _fetch_ip_to_file "https://ifconfig.me"     "$tmp/ip2" &
+  _fetch_ip_to_file "https://icanhazip.com"   "$tmp/ip3" &
+  local ip_pids="$!"   # last pid; we'll just wait below
+
+  # ── AWG container (fast, local docker call) ────────────────────────────────
+  if [ -n "${AWG_DOCKER_CONTAINER:-}" ]; then
+    printf '%s' "$AWG_DOCKER_CONTAINER" > "$tmp/awg"
+  else
+    docker ps --format '{{.Names}}' 2>/dev/null \
+      | grep -E 'amnezia.*awg|^awg[0-9]*$|^awg[-_]' \
+      | grep -Ev '^vpn-panel' | head -1 > "$tmp/awg" &
+  fi
+
+  # ── Wait for IP (up to 5 s) ────────────────────────────────────────────────
+  local deadline=$(( $(date +%s) + 5 )) ip=""
+  while [ "$(date +%s)" -lt "$deadline" ] && [ -z "$ip" ]; do
+    for f in "$tmp/ip1" "$tmp/ip2" "$tmp/ip3"; do
+      [ -s "$f" ] && { ip="$(cat "$f")"; _valid_ipv4 "$ip" && break 2 || ip=""; }
     done
-    find /opt/amnezia /etc/amnezia /etc/wireguard /config \
-      -maxdepth 4 -name "*.conf" 2>/dev/null | head -1
-  ' sh "$iface" 2>/dev/null || true
+    sleep 0.1
+  done
+  # Kill leftover IP fetchers
+  jobs -p | xargs kill 2>/dev/null || true
+  wait 2>/dev/null || true
+
+  if ! _valid_ipv4 "$ip"; then
+    ip="$(ip route get 1.1.1.1 2>/dev/null \
+      | awk '/src/{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1);exit}}' || true)"
+    _valid_ipv4 "$ip" || ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  fi
+  _DETECTED_IP="${ip:-127.0.0.1}"
+
+  local awg_container=""
+  [ -f "$tmp/awg" ] && awg_container="$(cat "$tmp/awg" 2>/dev/null || true)"
+  _DETECTED_AWG_CONTAINER="$awg_container"
+
+  # ── AWG port + config path in parallel (need container name first) ─────────
+  if [ -n "$awg_container" ]; then
+    if [ -n "${AWG_PORT:-}" ]; then
+      printf '%s' "$AWG_PORT" > "$tmp/port"
+    else
+      docker port "$awg_container" 2>/dev/null \
+        | awk -F: '/udp/ {print $NF; exit}' > "$tmp/port" &
+    fi
+
+    if [ -n "${AWG_CONTAINER_CONFIG_PATH:-}" ]; then
+      printf '%s' "$AWG_CONTAINER_CONFIG_PATH" > "$tmp/cfg"
+    else
+      local iface="${AWG_INTERFACE:-awg0}"
+      docker exec "$awg_container" sh -c '
+        for p in \
+          "/opt/amnezia/awg/$1.conf" "/opt/amnezia/amneziawg/$1.conf" \
+          "/etc/amnezia/amneziawg/$1.conf" "/etc/wireguard/$1.conf" \
+          "/config/$1.conf" "/opt/amnezia/awg/awg0.conf" \
+          "/etc/wireguard/awg0.conf" "/etc/wireguard/wg0.conf"; do
+          [ -f "$p" ] && printf "%s" "$p" && exit 0
+        done
+        find /opt/amnezia /etc/amnezia /etc/wireguard /config \
+          -maxdepth 4 -name "*.conf" 2>/dev/null | head -1
+      ' sh "$iface" > "$tmp/cfg" 2>/dev/null &
+    fi
+
+    wait 2>/dev/null || true
+    _DETECTED_AWG_PORT="$(cat "$tmp/port" 2>/dev/null || true)"
+    _DETECTED_AWG_CONFIG="$(cat "$tmp/cfg" 2>/dev/null || true)"
+  fi
+
+  rm -rf "$tmp"
 }
+
+# Thin wrappers kept for compatibility (read from cache)
+detect_awg_container()   { printf '%s' "$_DETECTED_AWG_CONTAINER"; }
+detect_udp_port()        { printf '%s' "$_DETECTED_AWG_PORT"; }
+detect_public_ip()       { printf '%s' "$_DETECTED_IP"; }
+detect_awg_config_path() { printf '%s' "$_DETECTED_AWG_CONFIG"; }
 
 iface_from_path() { basename "$1" .conf; }
 
@@ -201,23 +285,24 @@ gen_secret() {
 
 # ─── File copy ────────────────────────────────────────────────────────────────
 copy_project() {
-  step "Installing files → $INSTALL_DIR"
+  step "Installing files"
   mkdir -p "$INSTALL_DIR" "$BACKUP_DIR"
   if [ -d "$INSTALL_DIR/backend" ]; then
     local ts; ts="$(date +%Y%m%d-%H%M%S)"
+    spin_start "Backing up existing installation…"
     tar -czf "$BACKUP_DIR/vpn-panel-$ts.tar.gz" -C "$(dirname "$INSTALL_DIR")" "$(basename "$INSTALL_DIR")"
-    log_dim "Backup → $BACKUP_DIR/vpn-panel-$ts.tar.gz"
+    spin_stop
+    log_dim "Saved → $BACKUP_DIR/vpn-panel-$ts.tar.gz"
   fi
-  spin_start "Copying files…"
+  spin_start "Copying project files…"
   tar --exclude='.git' --exclude='.env' --exclude='data' \
       --exclude='backend/.venv' --exclude='frontend/node_modules' \
       --exclude='frontend/dist' --exclude='**/__pycache__' \
-      -C "$PROJECT_SRC" -czf /tmp/vpn-panel-install.tar.gz .
-  tar -xzf /tmp/vpn-panel-install.tar.gz -C "$INSTALL_DIR"
-  rm -f /tmp/vpn-panel-install.tar.gz
+      -C "$PROJECT_SRC" -czf - . \
+    | tar -xzf - -C "$INSTALL_DIR"
   spin_stop
   mkdir -p "$INSTALL_DIR/data"
-  log_ok "Files installed"
+  log "Files installed  ${DIM}→ $INSTALL_DIR${R}"
 }
 
 # ─── .env helpers ─────────────────────────────────────────────────────────────
@@ -241,12 +326,11 @@ write_env() {
   local env_path="$INSTALL_DIR/.env"
 
   if [ -f "$env_path" ]; then
-    log "Keeping existing $env_path"
-    # Patch missing keys after upgrade
-    ensure_env_key "$env_path" "PRICE_1M"  "${PRICE_1M:-199}"
-    ensure_env_key "$env_path" "PRICE_3M"  "${PRICE_3M:-499}"
-    ensure_env_key "$env_path" "PRICE_6M"  "${PRICE_6M:-899}"
-    ensure_env_key "$env_path" "PRICE_1Y"  "${PRICE_1Y:-1499}"
+    log_info "Existing config preserved"
+    ensure_env_key "$env_path" "PRICE_1M"   "${PRICE_1M:-199}"
+    ensure_env_key "$env_path" "PRICE_3M"   "${PRICE_3M:-499}"
+    ensure_env_key "$env_path" "PRICE_6M"   "${PRICE_6M:-899}"
+    ensure_env_key "$env_path" "PRICE_1Y"   "${PRICE_1Y:-1499}"
     ensure_env_key "$env_path" "PANEL_NAME" "${PANEL_NAME:-VPN Panel}"
     ensure_env_key "$env_path" "LAVA_API_KEY" ""
     ensure_env_key "$env_path" "LAVA_SHOP_ID" ""
@@ -256,29 +340,28 @@ write_env() {
 
   step "Creating configuration"
 
-  # ── Detect AWG ──────────────────────────────────────────────────────────────
-  local awg_container; awg_container="$(detect_awg_container)"
-  [ -n "$awg_container" ] || fail "AmneziaWG container not found. Run with AWG_DOCKER_CONTAINER=<name>."
-  log_dim "AWG container → $awg_container"
+  # All detections already ran in parallel at startup — just read the cache
+  local awg_container="$_DETECTED_AWG_CONTAINER"
+  local awg_port="$_DETECTED_AWG_PORT"
+  local server_ip="$_DETECTED_IP"
+  local awg_config_path="$_DETECTED_AWG_CONFIG"
 
-  local awg_port; awg_port="$(detect_udp_port "$awg_container")"
-  [ -n "$awg_port" ] || log_warn "Could not auto-detect AWG UDP port — update SERVER_ENDPOINT in .env"
-
-  local server_ip; server_ip="$(detect_public_ip)"
-  log_dim "Server IP → $server_ip"
-
-  local awg_config_path; awg_config_path="$(detect_awg_config_path "$awg_container")"
+  [ -n "$awg_container" ]  || fail "AmneziaWG container not found. Run with AWG_DOCKER_CONTAINER=<name>."
   [ -n "$awg_config_path" ] || fail "AWG config not found in container '$awg_container'."
-  log_dim "AWG config → $awg_config_path"
+
+  log_dim "Container  →  $awg_container"
+  log_dim "Public IP  →  $server_ip"
+  log_dim "AWG config →  $awg_config_path"
+  [ -n "$awg_port" ] && log_dim "UDP port   →  $awg_port" \
+    || log_warn "AWG UDP port not detected — update SERVER_ENDPOINT in .env later"
 
   local awg_iface; awg_iface="${AWG_INTERFACE:-$(iface_from_path "$awg_config_path")}"
   local server_endpoint="${SERVER_ENDPOINT:-}"
   [ -z "$server_endpoint" ] && [ -n "$awg_port" ] && server_endpoint="$server_ip:$awg_port"
   [ -n "$server_endpoint" ] || server_endpoint="$server_ip:"
 
-  # ── Secrets ─────────────────────────────────────────────────────────────────
-  local secret_key;       secret_key="$(gen_secret)"
-  local admin_password;   admin_password="$(gen_secret | cut -c1-20)"
+  local secret_key;     secret_key="$(gen_secret)"
+  local admin_password; admin_password="$(gen_secret | cut -c1-20)"
 
   cat > "$env_path" <<EOF
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -323,7 +406,7 @@ PANEL_NAME=${PANEL_NAME:-VPN Panel}
 PANEL_DOMAIN=${PANEL_DOMAIN:-}
 EOF
   chmod 600 "$env_path"
-  log_ok "Config written → $env_path"
+  log "Config written  ${DIM}→ $env_path${R}"
 }
 
 # ─── Start ────────────────────────────────────────────────────────────────────
@@ -334,26 +417,32 @@ start_containers() {
   docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 \
     || docker network create "$NETWORK_NAME" >/dev/null
   docker rm -f "$FRONTEND_CONTAINER" "$BACKEND_CONTAINER" >/dev/null 2>&1 || true
-  $cmd up -d --build backend frontend
+  spin_start "Building images…"
+  $cmd up -d --build backend frontend >/dev/null 2>&1
+  spin_stop
+  log "Containers started"
 }
 
 start_manually() {
-  step "Building & starting containers (manual)"
+  step "Building & starting containers"
   docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 \
     || docker network create "$NETWORK_NAME" >/dev/null
   docker rm -f "$FRONTEND_CONTAINER" "$BACKEND_CONTAINER" >/dev/null 2>&1 || true
 
-  local _log; _log="$(mktemp)"
+  # Build backend and frontend in parallel
+  local _log_be _log_fe
+  _log_be="$(mktemp)" _log_fe="$(mktemp)"
 
-  spin_start "Building backend…"
-  docker build -t vpn-panel-backend "$INSTALL_DIR/backend" >"$_log" 2>&1 || {
-    spin_stop; cat "$_log" >&2; fail "Backend build failed"; }
-  spin_stop; log_ok "Backend built"
+  spin_start "Building backend & frontend in parallel…"
+  docker build -t vpn-panel-backend  "$INSTALL_DIR/backend"  >"$_log_be" 2>&1 &
+  local be_pid=$!
+  docker build -t vpn-panel-frontend "$INSTALL_DIR/frontend" >"$_log_fe" 2>&1 &
+  local fe_pid=$!
 
-  spin_start "Building frontend…"
-  docker build -t vpn-panel-frontend "$INSTALL_DIR/frontend" >"$_log" 2>&1 || {
-    spin_stop; cat "$_log" >&2; fail "Frontend build failed"; }
-  spin_stop; rm -f "$_log"; log_ok "Frontend built"
+  wait $be_pid || { spin_stop; cat "$_log_be" >&2; rm -f "$_log_be" "$_log_fe"; fail "Backend build failed"; }
+  wait $fe_pid || { spin_stop; cat "$_log_fe" >&2; rm -f "$_log_be" "$_log_fe"; fail "Frontend build failed"; }
+  spin_stop; rm -f "$_log_be" "$_log_fe"
+  log "Images built"
 
   docker run -d --name "$BACKEND_CONTAINER" --restart unless-stopped \
     --network "$NETWORK_NAME" --network-alias backend \
@@ -362,108 +451,120 @@ start_manually() {
     -v /var/run/docker.sock:/var/run/docker.sock \
     -p "$BACKEND_BIND:$BACKEND_PORT:8090" \
     vpn-panel-backend >/dev/null
-  log_ok "Backend started"
+  log "Backend running  ${DIM}→ $BACKEND_BIND:$BACKEND_PORT${R}"
 
   docker run -d --name "$FRONTEND_CONTAINER" --restart unless-stopped \
     --network "$NETWORK_NAME" \
     -p "$PANEL_HTTP_BIND:$PANEL_HTTP_PORT:80" \
     vpn-panel-frontend >/dev/null
-  log_ok "Frontend started"
+  log "Frontend running  ${DIM}→ :$PANEL_HTTP_PORT${R}"
 }
 
 # ─── Healthcheck ──────────────────────────────────────────────────────────────
 healthcheck() {
-  step "Verifying installation"
+  step "Health check"
   spin_start "Waiting for backend…"
-  local attempt
-  for attempt in $(seq 1 35); do
+  local attempt=0 delay="0.3" elapsed="0"
+  while true; do
+    attempt=$(( attempt + 1 ))
     if curl -fsS "http://127.0.0.1:$BACKEND_PORT/api/health" >/dev/null 2>&1 \
       || wget -q -O /dev/null "http://127.0.0.1:$BACKEND_PORT/api/health" 2>/dev/null; then
-      spin_stop; log_ok "Backend is up"; break
+      spin_stop; log "Backend  ${BGN}online${R}  ${DIM}(~${elapsed}s)${R}"; break
     fi
-    [ "$attempt" = "35" ] && {
+    [ "$attempt" -ge 50 ] && {
       spin_stop
       docker logs --tail 40 "$BACKEND_CONTAINER" >&2 || true
       fail "Backend did not start in time"
     }
-    sleep 1
+    sleep "$delay"
+    elapsed="$(awk "BEGIN{printf \"%.0f\", $elapsed + $delay}")"
+    # Exponential backoff: 0.3 → 0.4 → 0.6 → … → max 2.0s
+    delay="$(awk "BEGIN{d=$delay*1.4; print (d>2)?2:d}")"
   done
 
   spin_start "Checking frontend…"
-  sleep 2
-  if curl -fsSI "http://127.0.0.1:$PANEL_HTTP_PORT" >/dev/null 2>&1 \
-    || wget -q --spider "http://127.0.0.1:$PANEL_HTTP_PORT" 2>/dev/null; then
-    spin_stop; log_ok "Frontend is up"
-  else
-    spin_stop; log_warn "Frontend healthcheck failed — check docker logs $FRONTEND_CONTAINER"
-  fi
-
-  printf "\n"
-  docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' \
-    | grep -E "$BACKEND_CONTAINER|$FRONTEND_CONTAINER|NAMES" || true
+  local fdelay="0.3" fatt=0
+  while true; do
+    fatt=$(( fatt + 1 ))
+    if curl -fsSI "http://127.0.0.1:$PANEL_HTTP_PORT" >/dev/null 2>&1 \
+      || wget -q --spider "http://127.0.0.1:$PANEL_HTTP_PORT" 2>/dev/null; then
+      spin_stop; log "Frontend  ${BGN}online${R}"; break
+    fi
+    [ "$fatt" -ge 20 ] && {
+      spin_stop; log_warn "Frontend check failed — run: docker logs $FRONTEND_CONTAINER"; break
+    }
+    sleep "$fdelay"
+    fdelay="$(awk "BEGIN{d=$fdelay*1.5; print (d>2)?2:d}")"
+  done
 }
 
 # ─── Interactive wizard ───────────────────────────────────────────────────────
+_prompt() {
+  # _prompt "Label" "default" → prints styled prompt, reads answer into _ANS
+  local label="$1" default="$2"
+  printf "  ${DIM}│${R}  ${B}%-22s${R}  ${DIM}[${CY}%s${DIM}]${R}  " "$label" "$default"
+  read -r _ANS
+  _ANS="${_ANS:-$default}"
+}
+
+_prompt_secret() {
+  local label="$1"
+  printf "  ${DIM}│${R}  ${B}%-22s${R}  ${DIM}[${CY}auto-generated${DIM}]${R}  " "$label"
+  read -r -s _ANS; printf "\n"
+}
+
 wizard() {
   [ -t 0 ] && [ "${INTERACTIVE:-1}" != "0" ] || return 0
 
   step "Configuration wizard"
-  printf "  ${D}Press Enter to accept the default shown in [brackets].${R}\n\n"
-  local _ans
 
-  # Server IP
-  local _ip; _ip="$(detect_public_ip)"
-  printf "  ${B}Server public IP${R}   [${CY}%s${R}]: " "$_ip"
-  read -r _ans; SERVER_IP="${_ans:-$_ip}"
+  # Read from cache — detect_environment() ran before wizard
+  local _ip="$_DETECTED_IP"
+  local _awg="$_DETECTED_AWG_CONTAINER"
+  local _wgp="$_DETECTED_AWG_PORT"
 
-  # Panel port
-  printf "  ${B}Panel port (HTTP)${R}  [${CY}%s${R}]: " "$PANEL_HTTP_PORT"
-  read -r _ans; PANEL_HTTP_PORT="${_ans:-$PANEL_HTTP_PORT}"
+  printf "  ${DIM}┌──────────────────────────────────────────────────┐${R}\n"
+  printf "  ${DIM}│${R}  ${IT}${DIM}Press Enter to accept the default in brackets${R}     ${DIM}│${R}\n"
+  printf "  ${DIM}├──────────────────────────────────────────────────┤${R}\n"
+  printf "  ${DIM}│${R}  ${DIM}Server${R}\n"
 
-  # AWG container
-  local _awg; _awg="$(detect_awg_container || true)"
-  printf "  ${B}AmneziaWG container${R} [${CY}%s${R}]: " "${_awg:-amnezia-awg}"
-  read -r _ans; AWG_DOCKER_CONTAINER="${_ans:-${_awg:-amnezia-awg}}"
+  _prompt "Public IP"          "$_ip";                     SERVER_IP="$_ANS"
+  _prompt "Panel port (HTTP)"  "$PANEL_HTTP_PORT";         PANEL_HTTP_PORT="$_ANS"
 
-  # AWG port
-  local _wgp=""; [ -n "${AWG_DOCKER_CONTAINER:-}" ] && _wgp="$(detect_udp_port "$AWG_DOCKER_CONTAINER" || true)"
-  printf "  ${B}AmneziaWG UDP port${R}  [${CY}%s${R}]: " "${_wgp:-?}"
-  read -r _ans; AWG_PORT="${_ans:-$_wgp}"
+  printf "  ${DIM}│${R}\n"
+  printf "  ${DIM}│${R}  ${DIM}AmneziaWG${R}\n"
+
+  _prompt "AWG container"      "${_awg:-amnezia-awg}";    AWG_DOCKER_CONTAINER="$_ANS"
+  _prompt "AWG UDP port"       "${_wgp:-?}";               AWG_PORT="$_ANS"
   [ -n "$AWG_PORT" ] || log_warn "AWG port not set — update SERVER_ENDPOINT in .env later"
 
-  # Admin credentials
-  printf "  ${B}Admin username${R}      [${CY}admin${R}]: "
-  read -r _ans; ADMIN_USERNAME="${_ans:-admin}"
+  printf "  ${DIM}│${R}\n"
+  printf "  ${DIM}│${R}  ${DIM}Admin account${R}\n"
 
-  printf "  ${B}Admin password${R}      [${CY}auto-generated${R}]: "
-  read -r -s _ans; printf "\n"
-  [ -n "$_ans" ] && ADMIN_PASSWORD="$_ans"
+  _prompt       "Username"     "admin";                    ADMIN_USERNAME="$_ANS"
+  _prompt_secret "Password";                               [ -n "$_ANS" ] && ADMIN_PASSWORD="$_ANS"
+  _prompt        "Panel name"  "VPN Panel";                PANEL_NAME="$_ANS"
 
-  # Panel name
-  printf "  ${B}Panel name${R}          [${CY}VPN Panel${R}]: "
-  read -r _ans; PANEL_NAME="${_ans:-VPN Panel}"
+  printf "  ${DIM}│${R}\n"
+  printf "  ${DIM}│${R}  ${DIM}Pricing (RUB)  ·  0 = hide plan${R}\n"
 
-  # Pricing
-  printf "\n  ${B}Pricing (RUB)${R}\n"
-  printf "  ${D}  0 = hide this plan from shop${R}\n\n"
-  printf "  1 месяц   [${CY}199${R}]: "; read -r _ans; PRICE_1M="${_ans:-199}"
-  printf "  3 месяца  [${CY}499${R}]: "; read -r _ans; PRICE_3M="${_ans:-499}"
-  printf "  6 месяцев [${CY}899${R}]: "; read -r _ans; PRICE_6M="${_ans:-899}"
-  printf "  1 год     [${CY}1499${R}]: "; read -r _ans; PRICE_1Y="${_ans:-1499}"
+  _prompt "1 month"   "199";  PRICE_1M="$_ANS"
+  _prompt "3 months"  "499";  PRICE_3M="$_ANS"
+  _prompt "6 months"  "899";  PRICE_6M="$_ANS"
+  _prompt "1 year"    "1499"; PRICE_1Y="$_ANS"
 
-  # Lava
-  printf "\n  ${B}Lava payments${R}  ${D}— auto-issue config after payment${R}\n"
-  printf "  Lava API Key   [${CY}Enter to skip${R}]: "
-  read -r _ans; LAVA_API_KEY="${_ans:-}"
+  printf "  ${DIM}│${R}\n"
+  printf "  ${DIM}│${R}  ${DIM}Lava payments${R}  ${DIM}(Enter to skip)${R}\n"
+
+  _prompt "Lava API Key" ""; LAVA_API_KEY="$_ANS"
   if [ -n "$LAVA_API_KEY" ]; then
-    printf "  Lava Shop ID   [${CY}enter ID${R}]: "
-    read -r _ans; LAVA_SHOP_ID="${_ans:-}"
-    log_ok "Lava configured"
+    _prompt "Lava Shop ID" ""; LAVA_SHOP_ID="$_ANS"
+    printf "  ${DIM}│${R}  ${BGN}✓${R}  Lava configured\n"
   else
-    log_dim "Lava skipped — add LAVA_API_KEY/LAVA_SHOP_ID to .env later"
+    printf "  ${DIM}│${R}  ${DIM}·  Lava skipped — add keys to .env later${R}\n"
   fi
 
-  printf "\n"
+  printf "  ${DIM}└──────────────────────────────────────────────────┘${R}\n\n"
 }
 
 # ─── Action selector ──────────────────────────────────────────────────────────
@@ -471,12 +572,15 @@ select_action() {
   [ -d "$INSTALL_DIR/backend" ] || { ACTION_MODE="install"; return; }
   [ -t 0 ] && [ "${INTERACTIVE:-1}" != "0" ] || { ACTION_MODE="${ACTION_MODE:-update}"; return; }
 
-  printf "\n  ${B}Panel already installed at ${CY}%s${R}\n\n" "$INSTALL_DIR"
-  printf "  ${CY}1${R}  Update         ${D}— rebuild containers, keep data & .env${R}\n"
-  printf "  ${CY}2${R}  Reinstall      ${D}— reset .env via wizard, keep client data${R}\n"
-  printf "  ${CY}3${R}  Full reinstall ${D}— wipe everything, start fresh${R}\n"
-  printf "  ${CY}0${R}  Exit\n"
-  printf "\n  ${B}Choice${R} [${CY}1${R}]: "
+  printf "  ${BCY}╔══════════════════════════════════════════════════╗${R}\n"
+  printf "  ${BCY}║${R}  ${BYL}⚠${R}  Panel already installed at ${CY}%s${R}\n" "$INSTALL_DIR"
+  printf "  ${BCY}╠══════════════════════════════════════════════════╣${R}\n"
+  printf "  ${BCY}║${R}  ${BCY}1${R}  ${B}Update${R}          ${DIM}rebuild containers, keep .env & data${R}\n"
+  printf "  ${BCY}║${R}  ${BCY}2${R}  ${B}Reinstall${R}       ${DIM}re-run wizard, keep client data${R}\n"
+  printf "  ${BCY}║${R}  ${BCY}3${R}  ${B}Full reinstall${R}  ${DIM}wipe everything, start fresh${R}\n"
+  printf "  ${BCY}║${R}  ${BCY}0${R}  Exit\n"
+  printf "  ${BCY}╚══════════════════════════════════════════════════╝${R}\n"
+  printf "\n  ${B}Choice${R}  ${DIM}[${CY}1${DIM}]${R}  "
   local _ans; read -r _ans
   case "${_ans:-1}" in
     2) ACTION_MODE="reinstall" ;;
@@ -491,43 +595,52 @@ wipe_data() {
   local ts; ts="$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$BACKUP_DIR"
   [ -d "$INSTALL_DIR/data" ] && {
+    spin_start "Backing up data…"
     tar -czf "$BACKUP_DIR/vpn-panel-data-$ts.tar.gz" -C "$INSTALL_DIR" data 2>/dev/null || true
+    spin_stop
     rm -rf "$INSTALL_DIR/data"
-    log_dim "Data backed up → $BACKUP_DIR/vpn-panel-data-$ts.tar.gz"
+    log_dim "Data saved → $BACKUP_DIR/vpn-panel-data-$ts.tar.gz"
   }
   rm -f "$INSTALL_DIR/.env"
-  log_ok "Wiped"
+  log "Wiped"
 }
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 print_summary() {
-  local username; username="$(env_value ADMIN_USERNAME)"
-  local password; password="$(env_value ADMIN_PASSWORD)"
-  local endpoint; endpoint="$(env_value SERVER_ENDPOINT)"
-  local awg_cont; awg_cont="$(env_value AWG_DOCKER_CONTAINER)"
+  local username;   username="$(env_value ADMIN_USERNAME)"
+  local password;   password="$(env_value ADMIN_PASSWORD)"
+  local endpoint;   endpoint="$(env_value SERVER_ENDPOINT)"
+  local awg_cont;   awg_cont="$(env_value AWG_DOCKER_CONTAINER)"
   local panel_name; panel_name="$(env_value PANEL_NAME)"
-  local server_ip; server_ip="$(detect_public_ip)"
+  local server_ip;  server_ip="$(detect_public_ip)"
   local panel_url="http://$server_ip:$PANEL_HTTP_PORT"
-  local S="══════════════════════════════════════════════════"
 
   printf "\n"
-  printf "  ${BCY}╔%s${R}\n" "$S"
-  printf "  ${BCY}║${R}  ${BGN}✓${R}  ${B}VPN Panel — Installation Complete${R}\n"
-  printf "  ${BCY}╠%s${R}\n" "$S"
-  printf "  ${BCY}║${R}  ${D}%-16s${R}  ${B}%s${R}\n"  "Panel URL"  "$panel_url"
-  printf "  ${BCY}║${R}  ${D}%-16s${R}  ${B}%s${R}\n"  "Admin"      "$panel_url/admin"
-  printf "  ${BCY}║${R}  ${D}%-16s${R}  ${B}%s${R}\n"  "Shop"       "$panel_url/"
-  printf "  ${BCY}║${R}  ${D}%-16s${R}  ${B}%s${R}\n"  "Cabinet"    "$panel_url/cabinet"
-  printf "  ${BCY}╠%s${R}\n" "$S"
-  printf "  ${BCY}║${R}  ${D}%-16s${R}  %s\n"  "Username"   "${username:-admin}"
-  printf "  ${BCY}║${R}  ${D}%-16s${R}  ${YL}%s${R}\n" "Password"   "$password"
-  printf "  ${BCY}╠%s${R}\n" "$S"
-  printf "  ${BCY}║${R}  ${D}%-16s${R}  %s\n"  "AWG Endpoint" "$endpoint"
-  printf "  ${BCY}║${R}  ${D}%-16s${R}  %s\n"  "AWG Container" "$awg_cont"
-  printf "  ${BCY}╚%s${R}\n" "$S"
-  printf "\n"
-  printf "  ${D}Manage .env: nano %s/.env${R}\n" "$INSTALL_DIR"
-  printf "  ${D}Logs:  docker logs -f %s${R}\n\n" "$BACKEND_CONTAINER"
+  printf "  ${BGN}╔══════════════════════════════════════════════════╗${R}\n"
+  printf "  ${BGN}║${R}  ${BGN}✓${R}  ${WH}Installation complete!${R}                        ${BGN}║${R}\n"
+  printf "  ${BGN}╠══════════════════════════════════════════════════╣${R}\n"
+  printf "  ${BGN}║${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}URLS${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}───────────────────────────────────────────${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}Panel     ${R}  ${BCY}%s${R}\n"        "$panel_url"
+  printf "  ${BGN}║${R}   ${DIM}Admin     ${R}  ${CY}%s/admin${R}\n"   "$panel_url"
+  printf "  ${BGN}║${R}   ${DIM}Shop      ${R}  ${CY}%s/${R}\n"        "$panel_url"
+  printf "  ${BGN}║${R}   ${DIM}Cabinet   ${R}  ${CY}%s/cabinet${R}\n" "$panel_url"
+  printf "  ${BGN}║${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}CREDENTIALS${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}───────────────────────────────────────────${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}Username  ${R}  ${WH}%s${R}\n"         "${username:-admin}"
+  printf "  ${BGN}║${R}   ${DIM}Password  ${R}  ${BYL}%s${R}\n"        "$password"
+  printf "  ${BGN}║${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}AWG${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}───────────────────────────────────────────${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}Endpoint  ${R}  %s\n"                  "$endpoint"
+  printf "  ${BGN}║${R}   ${DIM}Container ${R}  %s\n"                  "$awg_cont"
+  printf "  ${BGN}║${R}\n"
+  printf "  ${BGN}╠══════════════════════════════════════════════════╣${R}\n"
+  printf "  ${BGN}║${R}  ${DIM}Config:  nano %s/.env${R}\n"            "$INSTALL_DIR"
+  printf "  ${BGN}║${R}  ${DIM}Logs:    docker logs -f %s${R}\n"       "$BACKEND_CONTAINER"
+  printf "  ${BGN}╚══════════════════════════════════════════════════╝${R}\n\n"
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -535,12 +648,18 @@ main() {
   banner
   require_root
   install_docker_if_missing
+
+  # Run all environment detections in parallel before wizard or config writing
+  spin_start "Detecting environment…"
+  detect_environment
+  spin_stop
+
   select_action
 
   case "$ACTION_MODE" in
     full_reinstall) wipe_data; wizard ;;
     reinstall)      rm -f "$INSTALL_DIR/.env"; wizard ;;
-    update)         ;;  # keep .env, just rebuild
+    update)         ;;
     *)              wizard ;;
   esac
 
