@@ -126,6 +126,7 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
         {currentFrame ? (
           <div className="p-4 bg-white rounded-2xl inline-block">
             <QRCodeCanvas
+              key={frameIdx}
               id="qr-canvas-el"
               value={currentFrame}
               size={280}
