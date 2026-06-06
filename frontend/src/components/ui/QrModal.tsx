@@ -13,7 +13,7 @@ interface Props {
 type QrMode = "awg" | "wg";
 
 const CHUNK_SIZE   = 1200;   // chars per QR frame
-const FRAME_MS     = 750;    // ms per frame
+const FRAME_MS     = 2000;   // ms per frame
 
 // ── Очистка конфига от комментариев ───────────────────────────────────────────
 function stripComments(cfg: string): string {
