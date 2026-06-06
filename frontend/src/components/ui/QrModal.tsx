@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { Download } from "lucide-react";
 import { Modal } from "./Modal";
@@ -12,7 +12,7 @@ interface Props {
 
 type QrMode = "amnezia" | "wireguard";
 
-// ── adler32 checksum (browser CompressionStream computes it wrong) ─────────────
+// ── adler32 — browser CompressionStream вычисляет неправильно ─────────────────
 function adler32(data: Uint8Array): number {
   const MOD = 65521;
   let s1 = 1, s2 = 0;
@@ -23,13 +23,18 @@ function adler32(data: Uint8Array): number {
   return ((s2 << 16) | s1) >>> 0;
 }
 
-// ── Config parsing ─────────────────────────────────────────────────────────────
+// ── Парсинг .conf ──────────────────────────────────────────────────────────────
 function parseConf(text: string): Record<string, Record<string, string>> {
-  const lines  = text.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#"));
   const result: Record<string, Record<string, string>> = {};
-  let section  = "";
-  for (const line of lines) {
-    if (line.startsWith("[")) { section = line.slice(1, -1).toLowerCase(); result[section] = result[section] || {}; continue; }
+  let section = "";
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    if (line.startsWith("[")) {
+      section = line.slice(1, -1).toLowerCase();
+      result[section] = result[section] || {};
+      continue;
+    }
     const eq = line.indexOf("=");
     if (eq < 0 || !section) continue;
     result[section][line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
@@ -37,55 +42,56 @@ function parseConf(text: string): Record<string, Record<string, string>> {
   return result;
 }
 
-// ── Build AmneziaVPN JSON container ───────────────────────────────────────────
-function buildAmneziaJson(config: string, name: string) {
+// ── Сборка JSON для AmneziaVPN ─────────────────────────────────────────────────
+function buildAmneziaJson(config: string, name: string): object {
   const conf  = parseConf(config);
   const iface = conf["interface"] || {};
   const peer  = conf["peer"]      || {};
 
-  const privKey   = iface["PrivateKey"]         || "";
-  const addr      = iface["Address"]            || "10.8.0.2/32";
-  const dns       = iface["DNS"]                || "1.1.1.1, 8.8.8.8";
-  const mtu       = iface["MTU"]                || "1280";
-  const endpoint  = peer["Endpoint"]            || "";
-  const pubKey    = peer["PublicKey"]            || "";
-  const psk       = peer["PresharedKey"]        || "";
-  const allowed   = peer["AllowedIPs"]          || "0.0.0.0/0, ::/0";
-  const keepalive = peer["PersistentKeepalive"] || "25";
+  const privKey   = iface["PrivateKey"]          || "";
+  const addr      = iface["Address"]             || "10.8.0.2/32";
+  const dns       = iface["DNS"]                 || "1.1.1.1, 8.8.8.8";
+  const mtu       = iface["MTU"]                 || "1280";
+  const endpoint  = peer["Endpoint"]             || "";
+  const pubKey    = peer["PublicKey"]             || "";
+  const psk       = peer["PresharedKey"]         || "";
+  const allowed   = peer["AllowedIPs"]           || "0.0.0.0/0, ::/0";
+  const keepalive = peer["PersistentKeepalive"]  || "25";
 
   const lastColon = endpoint.lastIndexOf(":");
-  const host      = lastColon >= 0 ? endpoint.slice(0, lastColon) : endpoint;
-  const portStr   = lastColon >= 0 ? endpoint.slice(lastColon + 1) : "51820";
+  const host    = lastColon >= 0 ? endpoint.slice(0, lastColon) : endpoint;
+  const portStr = lastColon >= 0 ? endpoint.slice(lastColon + 1) : "51820";
 
   const dnsParts = dns.split(",").map(d => d.trim());
-  const dns1     = dnsParts[0] || "1.1.1.1";
-  const dns2     = dnsParts[1] || "8.8.8.8";
+  const dns1 = dnsParts[0] || "1.1.1.1";
+  const dns2 = dnsParts[1] || "8.8.8.8";
   const clientIp = addr.split("/")[0];
 
+  // AWG параметры обфускации
   const AWG_KEYS = ["Jc","Jmin","Jmax","S1","S2","S3","S4","H1","H2","H3","H4","I1","I2","I3","I4","I5"];
   const awgParams: Record<string, string> = {};
   for (const k of AWG_KEYS) { const v = iface[k]; if (v) awgParams[k] = v; }
 
-  // last_config is itself a JSON string (nested JSON)
+  // Внутренний JSON (last_config — это JSON-строка внутри JSON!)
   const lastConfig = {
     ...awgParams,
-    allowed_ips:          allowed.split(",").map(s => s.trim()),
-    clientId:             "",
-    client_ip:            clientIp,
-    client_priv_key:      privKey,
-    client_pub_key:       "",
-    config:               config,
-    hostName:             host,
+    allowed_ips:           allowed.split(",").map(s => s.trim()),
+    clientId:              "",
+    client_ip:             clientIp,
+    client_priv_key:       privKey,
+    client_pub_key:        "",
+    config:                config,
+    hostName:              host,
     mtu,
     persistent_keep_alive: keepalive,
-    port:                 parseInt(portStr) || 51820,
-    psk_key:              psk,
-    server_pub_key:       pubKey,
+    port:                  parseInt(portStr) || 51820,
+    psk_key:               psk,
+    server_pub_key:        pubKey,
   };
 
   const awg = {
     ...awgParams,
-    last_config:      JSON.stringify(lastConfig),  // nested JSON string!
+    last_config:      JSON.stringify(lastConfig),   // вложенная JSON-строка
     port:             portStr,
     protocol_version: "2",
     transport_proto:  "udp",
@@ -101,41 +107,43 @@ function buildAmneziaJson(config: string, name: string) {
   };
 }
 
-// ── AmneziaVPN URI: vpn:// + base64url( qCompress( JSON ) ) ─────────────────
-// Uses native browser DeflateStream + manual adler32 fix (browser gets it wrong)
-async function toAmneziaUri(config: string, name: string): Promise<string> {
-  const json  = JSON.stringify(buildAmneziaJson(config, name));
-  const data  = new TextEncoder().encode(json);
+// ── Генерация vpn:// URI ───────────────────────────────────────────────────────
+// Формат: vpn:// + Base64Url( [4 байта размер big-endian] + deflate(JSON) )
+// Adler32 в конце deflate-потока исправляется вручную (браузер считает неверно)
+async function buildAmneziaUri(config: string, name: string): Promise<string> {
+  const json = JSON.stringify(buildAmneziaJson(config, name));
+  const data = new TextEncoder().encode(json);
 
-  // 4-byte big-endian uncompressed size header (Qt qCompress format)
+  // 4-байтовый заголовок Qt qCompress — размер оригинала big-endian
   const header = new Uint8Array(4);
   new DataView(header.buffer).setUint32(0, data.length, false);
 
-  // Deflate compress (browser API)
+  // Сжатие через браузерный API
   const cs = new CompressionStream("deflate");
   const w  = cs.writable.getWriter();
   w.write(data); w.close();
   const compressed = new Uint8Array(await new Response(cs.readable).arrayBuffer());
 
-  // Fix adler32 — browser CompressionStream computes it wrong
+  // Правим adler32 — последние 4 байта deflate-потока
   const checksum = adler32(data);
-  const dv = new DataView(compressed.buffer, compressed.byteOffset + compressed.length - 4, 4);
-  dv.setUint32(0, checksum, false);
+  new DataView(
+    compressed.buffer,
+    compressed.byteOffset + compressed.length - 4,
+    4
+  ).setUint32(0, checksum, false);
 
-  // Combine header + compressed
+  // Собираем: заголовок + сжатые данные
   const result = new Uint8Array(4 + compressed.length);
   result.set(header, 0);
   result.set(compressed, 4);
 
-  // Base64 URL-safe (no padding)
+  // Base64 URL-safe без паддинга
   let binary = "";
   result.forEach(b => binary += String.fromCharCode(b));
-  const b64 = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-
-  return "vpn://" + b64;
+  return "vpn://" + btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-// ── Standard WireGuard QR (raw .conf, no AWG params) ─────────────────────────
+// ── WireGuard: чистый .conf без AWG параметров ────────────────────────────────
 const AWG_RE = /^(Jc|Jmin|Jmax|S1|S2|S3|S4|H1|H2|H3|H4|I1|I2|I3|I4|I5)\s*=/;
 
 function buildWireguardData(config: string): string {
@@ -147,40 +155,33 @@ function buildWireguardData(config: string): string {
     .trim();
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// ── Компонент ─────────────────────────────────────────────────────────────────
 
 export function QrModal({ open, onClose, config, clientName }: Props) {
   const [mode, setMode]     = useState<QrMode>("amnezia");
-  const [qrData, setQrData] = useState<string>("");
+  const [qrData, setQrData] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Generate QR data when mode or config changes
-  async function generate(m: QrMode, cfg: string) {
-    if (!cfg) return;
+  // Генерируем QR когда открывается модалка или меняется режим
+  useEffect(() => {
+    if (!open || !config) { setQrData(""); return; }
+
+    let cancelled = false;
     setLoading(true);
-    try {
-      if (m === "amnezia") {
-        setQrData(await toAmneziaUri(cfg, clientName || "VPN"));
-      } else {
-        setQrData(buildWireguardData(cfg));
-      }
-    } finally {
+    setQrData("");
+
+    if (mode === "amnezia") {
+      buildAmneziaUri(config, clientName || "VPN")
+        .then(uri => { if (!cancelled) setQrData(uri); })
+        .catch(e => { console.error("QR gen error:", e); })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    } else {
+      setQrData(buildWireguardData(config));
       setLoading(false);
     }
-  }
 
-  // Generate on open / mode change
-  useState(() => { if (open && config) generate(mode, config); });
-
-  function switchMode(m: QrMode) {
-    setMode(m);
-    generate(m, config);
-  }
-
-  // Also generate when modal first opens
-  if (open && config && !qrData && !loading) {
-    generate(mode, config);
-  }
+    return () => { cancelled = true; };
+  }, [open, mode, config, clientName]);
 
   const tooBig = qrData.length > 2900;
 
@@ -194,13 +195,13 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
   }
 
   return (
-    <Modal open={open} onClose={() => { onClose(); setQrData(""); }} title="QR-код подключения" size="sm">
+    <Modal open={open} onClose={() => { onClose(); }} title="QR-код подключения" size="sm">
 
-      {/* Mode toggle */}
+      {/* Переключатель режима */}
       <div className="flex rounded-xl p-0.5 mb-5"
         style={{ background: "rgba(255,255,255,0.05)" }}>
         {([["amnezia", "AmneziaVPN"], ["wireguard", "WireGuard"]] as const).map(([m, label]) => (
-          <button key={m} type="button" onClick={() => switchMode(m)}
+          <button key={m} type="button" onClick={() => setMode(m)}
             className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${
               mode === m ? "text-white" : "text-slate-500 hover:text-slate-300"
             }`}
@@ -213,7 +214,7 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
       {tooBig && (
         <div className="mb-4 px-3 py-2 rounded-xl text-xs text-yellow-400"
           style={{ background: "rgba(234,179,8,0.08)", border: "1px solid rgba(234,179,8,0.2)" }}>
-          ⚠ Данные слишком большие для QR. Используйте скачивание .conf файла.
+          ⚠ Данные слишком большие. Скачайте .conf файл.
         </div>
       )}
 
@@ -225,13 +226,7 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
           </div>
         ) : !tooBig && qrData ? (
           <div className="p-4 bg-white rounded-2xl">
-            <QRCodeCanvas
-              id="qr-canvas-el"
-              value={qrData}
-              size={230}
-              level="L"
-              marginSize={1}
-            />
+            <QRCodeCanvas id="qr-canvas-el" value={qrData} size={230} level="L" marginSize={1} />
           </div>
         ) : tooBig ? (
           <div className="w-[262px] h-[50px] rounded-xl flex items-center justify-center"
@@ -247,7 +242,7 @@ export function QrModal({ open, onClose, config, clientName }: Props) {
           : "WireGuard → + → Сканировать QR-код"}
       </p>
 
-      {!tooBig && qrData && (
+      {!tooBig && qrData && !loading && (
         <button type="button" onClick={downloadQr}
           className="btn-ghost w-full justify-center text-xs">
           <Download size={14} /> Сохранить QR как PNG
