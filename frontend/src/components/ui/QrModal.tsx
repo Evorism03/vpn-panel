@@ -12,7 +12,7 @@ interface Props {
 
 type QrMode = "awg" | "wg";
 
-const CHUNK_SIZE   = 1200;   // chars per QR frame
+const CHUNK_SIZE   = 400;    // chars per QR frame
 const FRAME_MS     = 2000;   // ms per frame
 
 // ── Очистка конфига от комментариев ───────────────────────────────────────────
