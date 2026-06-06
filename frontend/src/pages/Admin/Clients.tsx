@@ -49,11 +49,12 @@ function formatBytes(bytes: number): string {
 
 // ── Одна карточка клиента ─────────────────────────────────────────────────────
 function ClientRow({
-  client, selected, onSelect, onDownload, onQr, onRenew, onDelete,
+  client, selected, selectionActive, onSelect, onDownload, onQr, onRenew, onDelete,
   dumpInfo, onDragStart, onDragEnter,
 }: {
   client: Client;
   selected: boolean;
+  selectionActive: boolean;
   onSelect: (e: React.MouseEvent) => void;
   onDownload: () => void;
   onQr: () => void;
@@ -92,8 +93,9 @@ function ClientRow({
       {/* Основная строка */}
       <div
         className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none"
-        onMouseDown={onDragStart}
-        onMouseEnter={onDragEnter}
+        onMouseDown={selectionActive ? onDragStart : undefined}
+        onMouseEnter={selectionActive ? onDragEnter : undefined}
+        onClick={selectionActive ? undefined : () => setExpanded(v => !v)}
       >
 
         {/* Чекбокс */}
@@ -558,6 +560,7 @@ export default function Clients() {
               <ClientRow
                 client={client}
                 selected={selected.has(client.id)}
+                selectionActive={selected.size > 0}
                 onSelect={e => handleSelect(client.id, i, e)}
                 dumpInfo={dumpMap[client.public_key]}
                 onDragStart={e => handleCardDragStart(client.id, e)}
