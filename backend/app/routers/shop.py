@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..database import Order, get_db
 from ..services import lava
+from ..services.limiter import limiter
 from ..services.orders import process_order
 
 cfg = get_settings()
@@ -33,7 +34,8 @@ class OrderCreate(BaseModel):
 
 
 @router.post("/order")
-def create_order(body: OrderCreate, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def create_order(request: Request, body: OrderCreate, db: Session = Depends(get_db)):
     login = body.login.strip()
     email = body.email.strip()
     term = body.term.strip() or "1m"

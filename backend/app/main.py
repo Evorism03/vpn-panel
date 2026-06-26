@@ -1,17 +1,22 @@
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from datetime import date, timedelta
 from typing import Optional
 
 from fastapi import Cookie, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import StreamingResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from .auth import bootstrap_admin, decode_token
-from .database import SessionLocal, init_db
+from .database import Client, SessionLocal, init_db
 from .routers import admin, auth, portal, shop, servers
+from .services import email as email_svc
 from .services.awg import get_cfg_hash
+from .services.limiter import limiter
 from .services.orders import enforce_expired
 from . import broadcast as _bc
 
@@ -66,6 +71,36 @@ async def _expiry_enforcer():
             pass
 
 
+async def _expiry_notifier():
+    """Daily check: send email reminders to clients expiring in 3 or 7 days."""
+    while True:
+        await asyncio.sleep(86400)
+        try:
+            db = SessionLocal()
+            try:
+                today = date.today()
+                for days in (3, 7):
+                    target = (today + timedelta(days=days)).isoformat()
+                    clients = (
+                        db.query(Client)
+                        .filter(
+                            Client.status == "active",
+                            Client.expires_at == target,
+                            Client.contact != "",
+                        )
+                        .all()
+                    )
+                    for c in clients:
+                        if "@" in (c.contact or ""):
+                            email_svc.send_expiry_reminder(
+                                c.contact, c.id, c.name, c.expires_at, days,
+                            )
+            finally:
+                db.close()
+        except Exception:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     init_db()
@@ -81,13 +116,17 @@ async def lifespan(_app: FastAPI):
 
     t1 = asyncio.create_task(_cfg_monitor())
     t2 = asyncio.create_task(_expiry_enforcer())
+    t3 = asyncio.create_task(_expiry_notifier())
     yield
     t1.cancel()
     t2.cancel()
+    t3.cancel()
 
 
 app = FastAPI(title="VPN Panel API", lifespan=lifespan)
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(GZipMiddleware, minimum_size=512)
 app.add_middleware(
     CORSMiddleware,

@@ -16,6 +16,7 @@ from .awg import (
     next_free_ip, normalize_term, parse_interface, parse_peers,
     read_cfg, reload_awg_async, write_cfg,
 )
+from . import email as email_svc
 
 cfg = get_settings()
 
@@ -86,6 +87,9 @@ def create_client(db: Session, name: str, term: str, contact: str = "",
     db.commit()
     db.refresh(db_client)
     _bc.push("clients")
+
+    if contact and "@" in contact:
+        email_svc.send_order_confirmation(contact, client_id, name, config_text, expires_at)
 
     return {
         "id": client_id, "name": name, "public_key": public_key,
@@ -173,7 +177,36 @@ def renew_client(db: Session, client_id: str, term: str) -> dict:
 
     client.expires_at = new_expiry or None
     db.commit()
+
+    if client.contact and "@" in client.contact:
+        email_svc.send_renewal_confirmation(
+            client.contact, client_id, client.name, new_expiry or None,
+        )
+
     return {"id": client_id, "expires_at": new_expiry, "status": client.status}
+
+
+def restore_client_peer(client: Client):
+    """Re-add peer to AWG config using stored config_text (e.g. after unblock)."""
+    if not client.config_text:
+        raise HTTPException(400, "No stored config, cannot restore client")
+    psk_m = re.search(r"PresharedKey\s*=\s*(.+)", client.config_text)
+    psk   = psk_m.group(1).strip() if psk_m else awg(["genpsk"])
+    ip    = _ip_from_config(client.config_text)
+    expires_line = f"# Expires: {client.expires_at}\n" if client.expires_at else ""
+    peer_block = (
+        f"\n\n[Peer]\n"
+        f"# Name: {client.name}\n"
+        f"# ID: {client.id}\n"
+        f"# Created: {client.created_at}\n"
+        f"{expires_line}"
+        f"PublicKey = {client.public_key}\n"
+        f"PresharedKey = {psk}\n"
+        f"AllowedIPs = {ip}/32\n"
+    )
+    with AWG_WRITE_LOCK:
+        write_cfg(read_cfg().rstrip() + peer_block)
+    reload_awg_async()
 
 
 def _restore_expired_client(client: Client, new_expiry: str):

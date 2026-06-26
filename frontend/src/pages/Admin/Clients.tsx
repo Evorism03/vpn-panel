@@ -50,6 +50,7 @@ function formatBytes(bytes: number): string {
 // ── Одна карточка клиента ─────────────────────────────────────────────────────
 function ClientRow({
   client, selected, selectionActive, onSelect, onDownload, onQr, onRenew, onDelete,
+  onBlock, onUnblock,
   dumpInfo, onDragStart, onDragEnter,
 }: {
   client: Client;
@@ -60,6 +61,8 @@ function ClientRow({
   onQr: () => void;
   onRenew: () => void;
   onDelete: () => void;
+  onBlock: () => void;
+  onUnblock: () => void;
   dumpInfo?: { lastHandshake: number; rx: number; tx: number };
   onDragStart: (e: React.MouseEvent) => void;
   onDragEnter: () => void;
@@ -156,6 +159,17 @@ function ClientRow({
             className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
             <RefreshCw size={14} />
           </button>
+          {client.status === "blocked" ? (
+            <button onClick={onUnblock} title="Разблокировать"
+              className="p-1.5 rounded-lg text-yellow-500 hover:text-green-400 hover:bg-green-500/10 transition-colors">
+              <ShieldCheck size={14} />
+            </button>
+          ) : client.status === "active" ? (
+            <button onClick={onBlock} title="Заблокировать"
+              className="p-1.5 rounded-lg text-slate-500 hover:text-yellow-400 hover:bg-yellow-500/10 transition-colors">
+              <ShieldOff size={14} />
+            </button>
+          ) : null}
           <button onClick={onDelete} title="Удалить"
             className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors">
             <Trash2 size={14} />
@@ -368,12 +382,27 @@ export default function Clients() {
   const [error, setError]           = useState("");
   const [qrData, setQrData] = useState<{ config: string; name: string } | null>(null);
 
+  // Пагинация
+  const [offset, setOffset] = useState(0);
+  const LIMIT = 200;
+
+  // Сброс пагинации при поиске
+  useEffect(() => { setOffset(0); }, [debouncedSearch]);
+
   // Данные
-  const { data, isLoading } = useQuery({
-    queryKey: ["clients"],
-    queryFn: async () => (await api.get("/admin/clients")).data.clients as Client[],
+  const { data: rawData, isLoading } = useQuery({
+    queryKey: ["clients", debouncedSearch, offset],
+    queryFn: async () => {
+      const params: Record<string, string | number> = { limit: LIMIT, offset };
+      if (debouncedSearch) params.search = debouncedSearch;
+      return (await api.get("/admin/clients", { params })).data as { clients: Client[]; total: number };
+    },
     staleTime: 15_000,
   });
+
+  const data    = rawData?.clients ?? [];
+  const total   = rawData?.total ?? 0;
+  const hasMore = offset + LIMIT < total;
 
   const { data: statsData } = useQuery({
     queryKey: ["admin-stats"],
@@ -387,14 +416,7 @@ export default function Clients() {
   // Мутации
   const deleteMut = useMutation({
     mutationFn: (id: string) => api.delete(`/admin/clients/${id}`),
-    onMutate: async (id) => {
-      await qc.cancelQueries({ queryKey: ["clients"] });
-      const prev = qc.getQueryData<Client[]>(["clients"]);
-      qc.setQueryData<Client[]>(["clients"], old => old?.filter(c => c.id !== id));
-      return { prev };
-    },
-    onError: (_e, _id, ctx) => ctx?.prev && qc.setQueryData(["clients"], ctx.prev),
-    onSettled: () => qc.invalidateQueries({ queryKey: ["clients"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["clients"] }),
   });
 
   const renewMut = useMutation({
@@ -403,14 +425,20 @@ export default function Clients() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["clients"] }),
   });
 
+  const blockMut = useMutation({
+    mutationFn: (id: string) => api.post(`/admin/clients/${id}/block`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["clients"] }),
+  });
+
+  const unblockMut = useMutation({
+    mutationFn: (id: string) => api.post(`/admin/clients/${id}/unblock`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["clients"] }),
+  });
+
   // Выбор с поддержкой Shift+click
   const handleSelect = useCallback((id: string, idx: number, e: React.MouseEvent) => {
     e.stopPropagation();
-    const filtered = (data || []).filter(c =>
-      c.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-      c.id.includes(debouncedSearch) ||
-      c.contact.toLowerCase().includes(debouncedSearch.toLowerCase())
-    );
+    const filtered = data;
 
     setSelected(prev => {
       const next = new Set(prev);
@@ -502,11 +530,7 @@ export default function Clients() {
     }
   }
 
-  const filtered = (data || []).filter(c =>
-    c.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-    c.id.includes(debouncedSearch) ||
-    c.contact.toLowerCase().includes(debouncedSearch.toLowerCase())
-  );
+  const filtered = data;
 
   const allSelected = filtered.length > 0 && filtered.every(c => selected.has(c.id));
 
@@ -516,7 +540,7 @@ export default function Clients() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-xl font-semibold text-white mb-1">Клиенты</h1>
-          <p className="text-sm text-slate-500">{data?.length ?? 0} записей</p>
+          <p className="text-sm text-slate-500">{total} записей</p>
         </div>
         <button onClick={() => setCreateOpen(true)} className="btn-primary">
           <Plus size={16} /> Добавить
@@ -571,12 +595,26 @@ export default function Clients() {
                   setQrData({ config: d.config, name: client.name });
                 }}
                 onRenew={() => renewMut.mutate({ id: client.id, term: "1m" })}
+                onBlock={() => blockMut.mutate(client.id)}
+                onUnblock={() => unblockMut.mutate(client.id)}
                 onDelete={() => {
                   if (confirm(`Удалить ${client.name}?`)) deleteMut.mutate(client.id);
                 }}
               />
             </motion.div>
           ))}
+        </div>
+      )}
+
+      {/* Пагинация */}
+      {hasMore && (
+        <div className="flex justify-center mt-4">
+          <button
+            className="btn-ghost text-sm"
+            onClick={() => setOffset(o => o + LIMIT)}
+          >
+            Загрузить ещё ({total - offset - data.length} из {total})
+          </button>
         </div>
       )}
 

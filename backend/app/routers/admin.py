@@ -1,19 +1,28 @@
 """Admin API — requires JWT auth."""
+import io
 import json
+import os
 import secrets
+import zipfile
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..auth import get_current_admin, hash_password, require_superadmin
+from ..config import get_settings
 from ..database import Admin, AuditLog, Client, Order, get_db
 from ..services import awg as awg_svc
 from ..services.orders import (
     create_client, delete_client_from_cfg,
-    enforce_expired, process_order, renew_client,
+    enforce_expired, process_order, renew_client, restore_client_peer,
 )
+
+cfg = get_settings()
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -53,6 +62,9 @@ class ClientExpiry(BaseModel):
 @router.get("/clients")
 def list_clients(
     status: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    limit: int = Query(200, le=1000),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     admin: Admin = Depends(get_current_admin),
 ):
@@ -60,8 +72,16 @@ def list_clients(
     q = db.query(Client)
     if status:
         q = q.filter(Client.status == status)
-    clients = q.order_by(Client.created_at.desc()).all()
-    return {"clients": [_client_dict(c) for c in clients]}
+    if search:
+        s = f"%{search}%"
+        q = q.filter(or_(
+            Client.name.ilike(s),
+            Client.contact.ilike(s),
+            Client.id.ilike(s),
+        ))
+    total = q.count()
+    clients = q.order_by(Client.created_at.desc()).offset(offset).limit(limit).all()
+    return {"clients": [_client_dict(c) for c in clients], "total": total}
 
 
 @router.post("/clients")
@@ -123,6 +143,44 @@ def renew(
     return result
 
 
+@router.post("/clients/{client_id}/block")
+def block_client(
+    client_id: str,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    client = db.query(Client).filter(Client.id == client_id).first()
+    if not client:
+        raise HTTPException(404, "Client not found")
+    if client.status == "blocked":
+        return {"client": _client_dict(client)}
+    delete_client_from_cfg(client.public_key)
+    client.status = "blocked"
+    client.blocked_at = date.today().isoformat()
+    db.commit()
+    log(db, "client.block", "client", client_id, admin, {"name": client.name})
+    return {"client": _client_dict(client)}
+
+
+@router.post("/clients/{client_id}/unblock")
+def unblock_client(
+    client_id: str,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    client = db.query(Client).filter(Client.id == client_id).first()
+    if not client:
+        raise HTTPException(404, "Client not found")
+    if client.status != "blocked":
+        return {"client": _client_dict(client)}
+    restore_client_peer(client)
+    client.status = "active"
+    client.blocked_at = None
+    db.commit()
+    log(db, "client.unblock", "client", client_id, admin, {"name": client.name})
+    return {"client": _client_dict(client)}
+
+
 @router.patch("/clients/{client_id}/expiry")
 def set_expiry(
     client_id: str,
@@ -156,14 +214,25 @@ def get_config(
 @router.get("/orders")
 def list_orders(
     status: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    limit: int = Query(200, le=1000),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     admin: Admin = Depends(get_current_admin),
 ):
     q = db.query(Order)
     if status:
         q = q.filter(Order.status == status)
-    orders = q.order_by(Order.created_at.desc()).all()
-    return {"orders": [_order_dict(o) for o in orders]}
+    if search:
+        s = f"%{search}%"
+        q = q.filter(or_(
+            Order.login.ilike(s),
+            Order.email.ilike(s),
+            Order.id.ilike(s),
+        ))
+    total = q.count()
+    orders = q.order_by(Order.created_at.desc()).offset(offset).limit(limit).all()
+    return {"orders": [_order_dict(o) for o in orders], "total": total}
 
 
 @router.post("/orders/{order_id}/process")
@@ -296,6 +365,25 @@ def audit_log(
             .order_by(AuditLog.created_at.desc())
             .offset(offset).limit(limit).all())
     return {"logs": [_log_dict(l) for l in logs]}
+
+
+# ── Backup ─────────────────────────────────────────────────────────────────────
+
+@router.get("/backup")
+def backup(admin: Admin = Depends(get_current_admin)):
+    """Download a zip archive containing the SQLite DB and AWG config file."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        if os.path.exists(cfg.db_path):
+            zf.write(cfg.db_path, "vpn.db")
+        if not cfg.awg_docker_container and os.path.exists(cfg.awg_config_path):
+            zf.write(cfg.awg_config_path, "awg0.conf")
+    buf.seek(0)
+    return Response(
+        content=buf.read(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="vpn-backup.zip"'},
+    )
 
 
 # ── Stats ──────────────────────────────────────────────────────────────────────

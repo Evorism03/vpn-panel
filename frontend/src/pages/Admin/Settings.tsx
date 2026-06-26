@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Shield } from "lucide-react";
+import { Download, Plus, Shield, Trash2 } from "lucide-react";
 import { Card } from "../../components/ui/Card";
 import { Spinner } from "../../components/ui/Spinner";
 import { Modal } from "../../components/ui/Modal";
@@ -19,6 +19,22 @@ export default function Settings() {
   const [role, setRole] = useState("admin");
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
+  const [backupLoading, setBackupLoading] = useState(false);
+
+  async function downloadBackup() {
+    setBackupLoading(true);
+    try {
+      const resp = await api.get("/admin/backup", { responseType: "blob" });
+      const url = URL.createObjectURL(resp.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "vpn-backup.zip";
+      a.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setBackupLoading(false);
+    }
+  }
 
   const { data, isLoading } = useQuery({
     queryKey: ["admins"],
@@ -48,9 +64,20 @@ export default function Settings() {
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold text-white mb-1">Настройки</h1>
-        <p className="text-sm text-slate-500">Управление администраторами</p>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-xl font-semibold text-white mb-1">Настройки</h1>
+          <p className="text-sm text-slate-500">Управление администраторами</p>
+        </div>
+        <button
+          onClick={downloadBackup}
+          disabled={backupLoading}
+          className="btn-ghost text-xs px-3 py-2 gap-1.5"
+          title="Скачать резервную копию БД и конфига"
+        >
+          {backupLoading ? <Spinner className="w-3.5 h-3.5" /> : <Download size={14} />}
+          Резервная копия
+        </button>
       </div>
 
       {!isSuperAdmin ? (

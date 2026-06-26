@@ -38,11 +38,26 @@ class Settings(BaseSettings):
     lava_success_url: str = "http://localhost:5173/cabinet"
     lava_fail_url: str = "http://localhost:5173"
 
-    # Pricing (RUB)
+    # Pricing (RUB) — set to 0 to hide a term from the shop
+    price_3d: int = 79
+    price_7d: int = 129
+    price_14d: int = 179
     price_1m: int = 199
     price_3m: int = 499
     price_6m: int = 899
     price_1y: int = 1499
+
+    # SMTP email notifications (leave smtp_host empty to disable)
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_tls: bool = True
+
+    # Fernet key for encrypting server tokens in DB.
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    fernet_key: str = ""
 
     # Branding
     panel_name: str = "VPN Panel"

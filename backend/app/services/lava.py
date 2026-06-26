@@ -14,17 +14,23 @@ cfg = get_settings()
 LAVA_API = "https://api.lava.top/business/invoice"
 
 PRICES = {
-    "1m": cfg.price_1m,
-    "3m": cfg.price_3m,
-    "6m": cfg.price_6m,
-    "1y": cfg.price_1y,
+    "3d":  cfg.price_3d,
+    "7d":  cfg.price_7d,
+    "14d": cfg.price_14d,
+    "1m":  cfg.price_1m,
+    "3m":  cfg.price_3m,
+    "6m":  cfg.price_6m,
+    "1y":  cfg.price_1y,
 }
 
 TERM_LABELS = {
-    "1m": "1 месяц",
-    "3m": "3 месяца",
-    "6m": "6 месяцев",
-    "1y": "1 год",
+    "3d":  "3 дня",
+    "7d":  "7 дней",
+    "14d": "14 дней",
+    "1m":  "1 месяц",
+    "3m":  "3 месяца",
+    "6m":  "6 месяцев",
+    "1y":  "1 год",
 }
 
 

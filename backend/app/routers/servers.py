@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from ..auth import get_current_admin
 from ..database import Admin, Client, Server, get_db
+from ..services.crypto import decrypt, encrypt
 
 router = APIRouter(prefix="/api/admin/servers", tags=["servers"])
 
@@ -65,10 +66,16 @@ def _probe(server: dict) -> str:
 def _server_dict(s: Server, status: str = "unknown") -> dict:
     return {
         "id": s.id, "name": s.name, "base_url": s.base_url,
-        "token": s.token, "max_users": s.max_users,
+        "token": decrypt(s.token) if s.token else "",
+        "max_users": s.max_users,
         "is_active": s.is_active, "status": status,
         "created_at": s.created_at.isoformat() if s.created_at else None,
     }
+
+
+def _server_creds(s: Server) -> dict:
+    """Return base_url + decrypted token for HTTP calls."""
+    return {"base_url": s.base_url, "token": decrypt(s.token) if s.token else ""}
 
 
 # ── Local server settings ─────────────────────────────────────────────────────
@@ -151,8 +158,7 @@ def list_servers(
         return {"servers": []}
 
     with ThreadPoolExecutor(max_workers=min(8, len(servers))) as pool:
-        futures = [(s, pool.submit(_probe, {"base_url": s.base_url, "token": s.token}))
-                   for s in servers]
+        futures = [(s, pool.submit(_probe, _server_creds(s))) for s in servers]
 
     return {
         "servers": [
@@ -179,16 +185,17 @@ def create_server(
     if not base_url.startswith(("http://", "https://")):
         base_url = f"http://{base_url}"
 
+    raw_token = body.token.strip()
     server = Server(
         id=secrets.token_hex(8),
         name=name, base_url=base_url,
-        token=body.token.strip(),
+        token=encrypt(raw_token),
         max_users=max(0, body.max_users or 0),
     )
     db.add(server)
     db.commit()
     db.refresh(server)
-    status = _probe({"base_url": server.base_url, "token": server.token})
+    status = _probe({"base_url": server.base_url, "token": raw_token})
     return {"server": _server_dict(server, status)}
 
 
@@ -210,14 +217,14 @@ def update_server(
             url = f"http://{url}"
         s.base_url = url or s.base_url
     if body.token is not None:
-        s.token = body.token.strip()
+        s.token = encrypt(body.token.strip())
     if body.max_users is not None:
         s.max_users = max(0, body.max_users)
     if body.is_active is not None:
         s.is_active = body.is_active
     db.commit()
     db.refresh(s)
-    status = _probe({"base_url": s.base_url, "token": s.token}) if s.is_active else "disabled"
+    status = _probe(_server_creds(s)) if s.is_active else "disabled"
     return {"server": _server_dict(s, status)}
 
 
@@ -254,7 +261,7 @@ async def proxy_handler(
         raise HTTPException(404, "Server not found")
     body = await request.body()
     status, raw = _request(
-        {"base_url": s.base_url, "token": s.token},
+        _server_creds(s),
         request.method,
         f"/{path}",
         body or None,
@@ -275,7 +282,7 @@ def remote_clients(
     s = db.query(Server).filter(Server.id == server_id).first()
     if not s:
         raise HTTPException(404, "Server not found")
-    data = _json({"base_url": s.base_url, "token": s.token}, "GET", "/admin/clients")
+    data = _json(_server_creds(s), "GET", "/admin/clients")
     clients = data.get("clients", []) if isinstance(data, dict) else []
     for c in clients:
         c["serverId"] = server_id
@@ -292,4 +299,4 @@ def remote_stats(
     s = db.query(Server).filter(Server.id == server_id).first()
     if not s:
         raise HTTPException(404, "Server not found")
-    return _json({"base_url": s.base_url, "token": s.token}, "GET", "/admin/stats")
+    return _json(_server_creds(s), "GET", "/admin/stats")

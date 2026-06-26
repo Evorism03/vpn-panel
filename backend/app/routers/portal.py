@@ -1,10 +1,11 @@
 """Client cabinet API — auth by client_id."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..database import Client, Order, get_db
+from ..services.limiter import limiter
 from ..services.orders import renew_client
 
 router = APIRouter(prefix="/api/portal", tags=["portal"])
@@ -17,7 +18,8 @@ class PortalAuth(BaseModel):
 
 
 @router.post("/auth")
-def portal_auth(body: PortalAuth, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def portal_auth(request: Request, body: PortalAuth, db: Session = Depends(get_db)):
     """Login by client_id OR email.
     - client_id → returns single client
     - email     → returns all clients for that email (may be many devices/subscriptions)
