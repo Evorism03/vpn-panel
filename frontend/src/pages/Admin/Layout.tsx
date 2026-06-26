@@ -4,7 +4,7 @@ import { clsx } from "clsx";
 import { useSSE } from "../../hooks/useSSE";
 import {
   LayoutDashboard, Users, ShoppingCart, Settings,
-  LogOut, Shield, Menu, ClipboardList, Server,
+  LogOut, Shield, Menu, ClipboardList, Server, X,
 } from "lucide-react";
 import { useAuthStore } from "../../store/auth";
 
@@ -21,78 +21,139 @@ export function AdminLayout({ children }: { children: ReactNode }) {
   const { admin, logout } = useAuthStore();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  useSSE(); // real-time updates for all admin tabs
+  useSSE();
 
   function doLogout() {
     logout();
     navigate("/admin/login");
   }
 
-  return (
-    <div className="min-h-screen bg-[#080b0f] flex">
-      {/* Sidebar */}
-      <aside
-        className={clsx(
-          "fixed inset-y-0 left-0 z-40 flex flex-col w-56 glass border-r border-white/6 transition-transform duration-200",
-          sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
-        )}
-      >
-        {/* Logo */}
-        <div className="flex items-center gap-2.5 px-5 py-5 border-b border-white/6">
-          <div className="w-7 h-7 rounded-lg bg-green-500/20 border border-green-500/30 flex items-center justify-center shrink-0">
+  const sidebar = (
+    <aside
+      className={clsx(
+        "fixed inset-y-0 left-0 z-40 flex flex-col w-56 transition-transform duration-200",
+        sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+      )}
+      style={{
+        background: "rgba(8,11,15,0.97)",
+        borderRight: "1px solid rgba(255,255,255,0.06)",
+        backdropFilter: "blur(20px)",
+      }}
+    >
+      {/* Top gradient accent */}
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-green-500/40 to-transparent" />
+
+      {/* Logo */}
+      <div className="flex items-center justify-between px-5 py-5"
+        style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+            style={{ background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.3)" }}>
             <Shield size={14} className="text-green-400" />
           </div>
-          <span className="font-semibold text-white text-sm">VPN Admin</span>
+          <span className="font-semibold text-white text-sm tracking-tight">VPN Admin</span>
+        </div>
+        {/* Mobile close */}
+        <button
+          onClick={() => setSidebarOpen(false)}
+          className="lg:hidden p-1 text-slate-600 hover:text-white transition-colors"
+        >
+          <X size={16} />
+        </button>
+      </div>
+
+      {/* Nav */}
+      <nav className="flex-1 px-2.5 py-3 space-y-0.5 overflow-y-auto">
+        {NAV.map(({ to, icon: Icon, label, exact }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={exact}
+            onClick={() => setSidebarOpen(false)}
+            className={({ isActive }) => clsx(
+              "relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-150 group",
+              isActive
+                ? "text-green-400 font-medium"
+                : "text-slate-500 hover:text-slate-200 hover:bg-white/4"
+            )}
+            style={({ isActive }) => isActive ? {
+              background: "rgba(34,197,94,0.1)",
+              border: "1px solid rgba(34,197,94,0.15)",
+            } : { border: "1px solid transparent" }}
+          >
+            {({ isActive }) => (
+              <>
+                {/* Left indicator bar */}
+                {isActive && (
+                  <span className="absolute left-0 top-2.5 bottom-2.5 w-0.5 rounded-r-full bg-green-400" />
+                )}
+                <Icon size={16} className={isActive ? "text-green-400" : "text-slate-600 group-hover:text-slate-400 transition-colors"} />
+                {label}
+              </>
+            )}
+          </NavLink>
+        ))}
+      </nav>
+
+      {/* Admin info + logout */}
+      <div className="px-2.5 py-3" style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+        {/* Status dot */}
+        <div className="flex items-center gap-1.5 px-3 mb-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+          <span className="text-[10px] text-slate-600">Система в сети</span>
         </div>
 
-        {/* Nav */}
-        <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-          {NAV.map(({ to, icon: Icon, label, exact }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={exact}
-              onClick={() => setSidebarOpen(false)}
-              className={({ isActive }) => clsx(
-                "flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-150",
-                isActive
-                  ? "bg-green-500/15 text-green-400 font-medium"
-                  : "text-slate-400 hover:text-white hover:bg-white/5"
-              )}
-            >
-              <Icon size={16} />
-              {label}
-            </NavLink>
-          ))}
-        </nav>
-
-        {/* Admin info */}
-        <div className="px-3 py-4 border-t border-white/6">
-          <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl hover:bg-white/5 transition-colors group cursor-default">
-            <div className="w-7 h-7 rounded-full bg-green-500/20 flex items-center justify-center text-xs text-green-400 font-medium shrink-0">
-              {admin?.display_name?.[0] || admin?.username?.[0] || "A"}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-white truncate">{admin?.display_name || admin?.username}</p>
-              <p className="text-[10px] text-slate-500">{admin?.role}</p>
-            </div>
-            <button onClick={doLogout} className="p-1 text-slate-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100">
-              <LogOut size={13} />
-            </button>
+        <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl group"
+          style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}>
+          {/* Avatar */}
+          <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 text-green-400"
+            style={{ background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.2)" }}>
+            {admin?.display_name?.[0]?.toUpperCase() || admin?.username?.[0]?.toUpperCase() || "A"}
           </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-medium text-white truncate">
+              {admin?.display_name || admin?.username}
+            </p>
+            <p className="text-[10px] text-slate-600">{admin?.role}</p>
+          </div>
+          <button
+            onClick={doLogout}
+            title="Выйти"
+            className="p-1 rounded-lg text-slate-700 hover:text-red-400 hover:bg-red-500/10 transition-all opacity-0 group-hover:opacity-100"
+          >
+            <LogOut size={13} />
+          </button>
         </div>
-      </aside>
+      </div>
+    </aside>
+  );
+
+  return (
+    <div className="min-h-screen bg-[#080b0f] flex">
+      {sidebar}
 
       {/* Mobile overlay */}
       {sidebarOpen && (
-        <div className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setSidebarOpen(false)} />
+        <div
+          className="fixed inset-0 z-30 lg:hidden"
+          style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}
+          onClick={() => setSidebarOpen(false)}
+        />
       )}
 
       {/* Main */}
-      <main className="flex-1 lg:ml-56 min-h-screen">
+      <main className="flex-1 lg:ml-56 min-h-screen flex flex-col">
         {/* Mobile topbar */}
-        <div className="sticky top-0 z-20 flex items-center gap-3 px-4 py-3 lg:hidden glass border-b border-white/6">
-          <button onClick={() => setSidebarOpen(true)} className="p-1.5 text-slate-400 hover:text-white">
+        <div className="sticky top-0 z-20 flex items-center gap-3 px-4 py-3 lg:hidden"
+          style={{
+            background: "rgba(8,11,15,0.95)",
+            borderBottom: "1px solid rgba(255,255,255,0.06)",
+            backdropFilter: "blur(16px)",
+          }}>
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-colors"
+          >
             <Menu size={20} />
           </button>
           <div className="flex items-center gap-2">
@@ -100,7 +161,8 @@ export function AdminLayout({ children }: { children: ReactNode }) {
             <span className="text-sm font-medium text-white">VPN Admin</span>
           </div>
         </div>
-        <div className="p-5 lg:p-8">
+
+        <div className="flex-1 p-5 lg:p-8">
           {children}
         </div>
       </main>
