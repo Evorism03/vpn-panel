@@ -69,8 +69,19 @@ function LoginScreen({ onLogin }: {
   }
 
   return (
-    <div className="min-h-screen bg-[#080b0f] flex flex-col">
-      <div className="absolute inset-0 bg-radial-green pointer-events-none" />
+    <div className="min-h-screen bg-[#080b0f] flex flex-col relative overflow-hidden">
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2
+          w-[600px] h-[600px] bg-green-500/6 blur-[120px] rounded-full" />
+        <svg className="absolute inset-0 w-full h-full opacity-[0.03]">
+          <defs>
+            <pattern id="cgrid" x="0" y="0" width="32" height="32" patternUnits="userSpaceOnUse">
+              <circle cx="1" cy="1" r="1" fill="#4ade80" />
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#cgrid)" />
+        </svg>
+      </div>
 
       <div className="relative z-10 px-6 pt-5">
         <button onClick={() => navigate("/")}
@@ -133,7 +144,7 @@ function LoginScreen({ onLogin }: {
   );
 }
 
-// ── Subscription card — flat, all actions always visible ──────────────────────
+// ── Subscription card ─────────────────────────────────────────────────────────
 
 function SubCard({ client, onDownload, onQr, onRenew }: {
   client: ClientInfo;
@@ -143,20 +154,31 @@ function SubCard({ client, onDownload, onQr, onRenew }: {
 }) {
   const exp  = client.expires_at ? new Date(client.expires_at) : null;
   const days = daysLeft(client.expires_at);
-  const urgent = days !== null && days <= 7 && days >= 0;
+  const urgent  = days !== null && days <= 7 && days >= 0;
+  const expired = days !== null && days <= 0;
+
+  // Progress bar: assume max subscription ~365 days, cap at 100%
+  const progressPct = days === null ? null
+    : days <= 0 ? 0
+    : Math.min(100, Math.round((days / 365) * 100));
+
+  const barColor = expired  ? "bg-red-500"
+    : urgent  ? "bg-yellow-400"
+    : days !== null && days <= 30 ? "bg-yellow-500"
+    : "bg-green-500";
 
   return (
     <div className="rounded-2xl overflow-hidden" style={{
       background: "rgba(255,255,255,0.04)",
-      border: `1.5px solid ${urgent ? "rgba(234,179,8,0.3)" : "rgba(255,255,255,0.08)"}`,
+      border: `1.5px solid ${urgent || expired ? "rgba(234,179,8,0.25)" : "rgba(255,255,255,0.08)"}`,
     }}>
       {/* Top info */}
       <div className="px-4 pt-4 pb-3">
-        <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold shrink-0"
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold shrink-0"
               style={{ background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.2)" }}>
-              <span className="text-green-400">{client.name?.[0]?.toUpperCase() || "?"}</span>
+              <span className="text-green-400 text-base">{client.name?.[0]?.toUpperCase() || "?"}</span>
             </div>
             <div className="min-w-0">
               <p className="text-sm font-medium text-white truncate">{client.name || "Устройство"}</p>
@@ -175,32 +197,45 @@ function SubCard({ client, onDownload, onQr, onRenew }: {
           </div>
         </div>
 
-        {exp && (
-          <div className="flex items-center gap-1.5 mt-3 text-xs text-slate-500">
-            <Clock size={11} />
-            {format(exp, "d MMMM yyyy", { locale: ru })}
-            <span className="ml-auto text-slate-600 font-mono text-[10px]">ID: {client.id}</span>
+        {/* Progress bar */}
+        {progressPct !== null && (
+          <div className="mb-2">
+            <div className="h-1 w-full rounded-full bg-white/6 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between mt-1.5">
+              <span className="text-[10px] text-slate-600 flex items-center gap-1">
+                <Clock size={9} />
+                {exp ? format(exp, "d MMMM yyyy", { locale: ru }) : ""}
+              </span>
+              <span className="text-[10px] text-slate-700 font-mono">ID: {client.id.slice(0, 8)}</span>
+            </div>
           </div>
         )}
       </div>
 
-      {/* Action buttons — always visible, not inside another button */}
-      <div className="grid grid-cols-3 gap-0 border-t"
-        style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+      {/* Action buttons */}
+      <div className="grid grid-cols-3 border-t" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
         {[
-          { icon: Download,   label: "Скачать",   fn: onDownload },
-          { icon: QrCode,     label: "QR-код",    fn: onQr       },
-          { icon: RefreshCw,  label: "Продлить",  fn: onRenew    },
+          { icon: Download,  label: "Скачать",  fn: onDownload },
+          { icon: QrCode,    label: "QR-код",   fn: onQr       },
+          { icon: RefreshCw, label: "Продлить", fn: onRenew    },
         ].map(({ icon: Icon, label, fn }, i) => (
           <button
             key={label}
             type="button"
             onClick={fn}
-            className="flex flex-col items-center gap-1.5 py-3 transition-colors hover:bg-white/5 active:bg-white/10"
+            className="flex flex-col items-center gap-1.5 py-3.5 transition-all
+              hover:bg-white/5 active:bg-white/10 group"
             style={i < 2 ? { borderRight: "1px solid rgba(255,255,255,0.06)" } : {}}
           >
-            <Icon size={16} className="text-green-400" />
-            <span className="text-xs text-slate-400">{label}</span>
+            <Icon size={16} className="text-green-400 group-hover:scale-110 transition-transform" />
+            <span className="text-xs text-slate-500 group-hover:text-slate-300 transition-colors">
+              {label}
+            </span>
           </button>
         ))}
       </div>
@@ -331,8 +366,19 @@ export default function Cabinet() {
   const userEmail    = list[0]?.contact;
 
   return (
-    <div className="min-h-screen bg-[#080b0f] px-4 py-8">
-      <div className="absolute inset-0 bg-radial-green pointer-events-none" />
+    <div className="min-h-screen bg-[#080b0f] px-4 py-8 relative overflow-hidden">
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2
+          w-[500px] h-[400px] bg-green-500/5 blur-[100px] rounded-full" />
+        <svg className="absolute inset-0 w-full h-full opacity-[0.025]">
+          <defs>
+            <pattern id="mgrid" x="0" y="0" width="32" height="32" patternUnits="userSpaceOnUse">
+              <circle cx="1" cy="1" r="1" fill="#4ade80" />
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#mgrid)" />
+        </svg>
+      </div>
 
       <div className="relative max-w-lg mx-auto">
 
