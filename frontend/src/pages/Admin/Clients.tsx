@@ -301,14 +301,15 @@ function DetailRow({ icon: Icon, label, value, color, mono }: {
   color?: string; mono?: boolean;
 }) {
   return (
-    <div className="flex items-start gap-2 min-w-0">
-      <Icon size={12} className="text-slate-600 mt-0.5 shrink-0" />
-      <div className="min-w-0">
-        <p className="text-[10px] text-slate-600 mb-0.5">{label}</p>
-        <p className={`text-xs truncate ${color || "text-slate-300"} ${mono ? "font-mono" : ""}`}>
-          {value}
-        </p>
+    <div className="rounded-xl px-3 py-2.5 min-w-0"
+      style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}>
+      <div className="flex items-center gap-1.5 mb-1">
+        <Icon size={11} className="text-slate-600 shrink-0" />
+        <p className="text-[10px] text-slate-600 uppercase tracking-wide">{label}</p>
       </div>
+      <p className={`text-xs truncate font-medium ${color || "text-slate-300"} ${mono ? "font-mono" : ""}`}>
+        {value}
+      </p>
     </div>
   );
 }
@@ -592,9 +593,11 @@ export default function Clients() {
       {isLoading ? (
         <div className="flex justify-center py-20"><Spinner /></div>
       ) : filtered.length === 0 ? (
-        <Card className="text-center py-12">
-          <p className="text-slate-500 text-sm">Клиенты не найдены</p>
-        </Card>
+        <div className="flex flex-col items-center justify-center py-20 text-slate-600">
+          <Users size={32} className="mb-3 opacity-40" />
+          <p className="text-sm">Клиенты не найдены</p>
+          {search && <p className="text-xs mt-1 text-slate-700">Попробуйте изменить запрос</p>}
+        </div>
       ) : (
         <div className="space-y-2">
           {filtered.map((client, i) => (

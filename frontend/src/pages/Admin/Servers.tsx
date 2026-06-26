@@ -136,11 +136,20 @@ export default function Servers() {
 
           {/* Remote servers */}
           {servers.length === 0 ? (
-            <Card className="text-center py-10">
-              <Server size={32} className="text-slate-600 mx-auto mb-3" />
+            <div className="rounded-2xl p-10 text-center"
+              style={{ background: "rgba(255,255,255,0.02)", border: "1px dashed rgba(255,255,255,0.08)" }}>
+              <div className="w-14 h-14 rounded-2xl mx-auto mb-4 flex items-center justify-center"
+                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                <Server size={24} className="text-slate-600" />
+              </div>
               <p className="text-slate-400 text-sm mb-1">Нет удалённых серверов</p>
-              <p className="text-slate-600 text-xs">Добавьте VPS-агент для управления несколькими серверами</p>
-            </Card>
+              <p className="text-slate-600 text-xs max-w-xs mx-auto">
+                Добавьте VPS-агент для управления несколькими серверами из одной панели
+              </p>
+              <button onClick={openCreate} className="btn-ghost text-xs px-4 py-2 mt-4 gap-1.5">
+                <Plus size={13} /> Добавить первый сервер
+              </button>
+            </div>
           ) : (
             servers.map((s, i) => (
               <motion.div
@@ -149,12 +158,31 @@ export default function Servers() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05 }}
               >
-                <Card hover className="!p-4">
-                  <div className="flex items-center gap-4">
+                <div className="rounded-2xl overflow-hidden relative"
+                  style={{
+                    background: "rgba(255,255,255,0.03)",
+                    border: `1px solid ${s.status === "online" ? "rgba(34,197,94,0.15)" : "rgba(255,255,255,0.07)"}`,
+                  }}>
+                  {/* Status left bar */}
+                  <div className="absolute left-0 top-0 bottom-0 w-0.5"
+                    style={{
+                      background: s.status === "online" ? "rgba(34,197,94,0.6)"
+                        : s.status === "degraded" ? "rgba(234,179,8,0.6)"
+                        : s.status === "offline"  ? "rgba(239,68,68,0.6)"
+                        : "rgba(100,116,139,0.3)",
+                    }} />
+
+                  <div className="flex items-center gap-4 px-5 py-4">
                     <div className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 ${
-                      s.status === "online" ? "bg-green-500/10 border-green-500/20" : "bg-white/5 border-white/10"
+                      s.status === "online" ? "bg-green-500/10 border-green-500/20"
+                      : s.status === "offline" ? "bg-red-500/10 border-red-500/20"
+                      : "bg-white/5 border-white/10"
                     }`}>
-                      <Server size={18} className={s.status === "online" ? "text-green-400" : "text-slate-500"} />
+                      <Server size={18} className={
+                        s.status === "online" ? "text-green-400"
+                        : s.status === "offline" ? "text-red-400"
+                        : "text-slate-500"
+                      } />
                     </div>
 
                     <div className="flex-1 min-w-0">
@@ -162,40 +190,40 @@ export default function Servers() {
                         <p className="text-sm font-semibold text-white">{s.name}</p>
                         <StatusDot status={s.status} />
                         {!s.is_active && (
-                          <span className="text-xs text-slate-500">(отключён)</span>
+                          <span className="text-xs text-slate-600 bg-white/5 px-2 py-0.5 rounded-full">отключён</span>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 text-xs text-slate-500">
-                        <span className="truncate">{s.base_url}</span>
+                      <div className="flex items-center gap-3 text-xs text-slate-600">
+                        <span className="truncate font-mono">{s.base_url}</span>
                         {s.max_users > 0 && (
-                          <span className="flex items-center gap-1 shrink-0">
-                            <Users size={11} /> макс. {s.max_users}
+                          <span className="flex items-center gap-1 shrink-0 text-slate-500">
+                            <Users size={10} /> макс. {s.max_users}
                           </span>
                         )}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-1 shrink-0">
                       <button
                         onClick={() => setExpandedId(expandedId === s.id ? null : s.id)}
-                        className="p-2 rounded-lg text-slate-400 hover:text-blue-400 hover:bg-blue-500/10 transition-colors text-xs"
+                        className="p-2 rounded-xl text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 transition-colors"
                         title="Статистика"
                       >
-                        <Users size={15} />
+                        <Users size={14} />
                       </button>
                       <button
                         onClick={() => openEdit(s)}
-                        className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/8 transition-colors"
+                        className="p-2 rounded-xl text-slate-500 hover:text-white hover:bg-white/8 transition-colors"
                         title="Редактировать"
                       >
-                        <Edit2 size={15} />
+                        <Edit2 size={14} />
                       </button>
                       <button
                         onClick={() => { if (confirm(`Удалить сервер «${s.name}»?`)) deleteMut.mutate(s.id); }}
-                        className="p-2 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                        className="p-2 rounded-xl text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
                         title="Удалить"
                       >
-                        <Trash2 size={15} />
+                        <Trash2 size={14} />
                       </button>
                     </div>
                   </div>
@@ -209,13 +237,14 @@ export default function Servers() {
                         exit={{ height: 0, opacity: 0 }}
                         className="overflow-hidden"
                       >
-                        <div className="mt-3 pt-3 border-t border-white/8">
+                        <div className="px-5 pb-4 pt-1 border-t"
+                          style={{ borderColor: "rgba(255,255,255,0.06)" }}>
                           <RemoteStats serverId={s.id} />
                         </div>
                       </motion.div>
                     )}
                   </AnimatePresence>
-                </Card>
+                </div>
               </motion.div>
             ))
           )}
@@ -412,20 +441,21 @@ function RemoteStats({ serverId }: { serverId: string }) {
     staleTime: 30_000,
   });
 
-  if (isLoading) return <div className="flex justify-center py-2"><Spinner className="w-4 h-4" /></div>;
-  if (!data) return <p className="text-xs text-slate-500">Нет данных</p>;
+  if (isLoading) return <div className="flex justify-center py-3"><Spinner className="w-4 h-4" /></div>;
+  if (!data) return <p className="text-xs text-slate-500 py-2">Нет данных</p>;
 
   return (
-    <div className="grid grid-cols-4 gap-3">
+    <div className="grid grid-cols-4 gap-2 mt-3">
       {[
-        { label: "Всего",    value: data.clients?.total   ?? "—" },
-        { label: "Активных", value: data.clients?.active  ?? "—", color: "text-green-400" },
-        { label: "Истёкших", value: data.clients?.expired ?? "—", color: "text-red-400" },
-        { label: "Заказов",  value: data.orders?.pending  ?? "—", color: "text-yellow-400" },
+        { label: "Всего",    value: data.clients?.total   ?? "—", color: "text-white",        bg: "rgba(255,255,255,0.04)", border: "rgba(255,255,255,0.08)" },
+        { label: "Активных", value: data.clients?.active  ?? "—", color: "text-green-400",    bg: "rgba(34,197,94,0.08)",  border: "rgba(34,197,94,0.15)"   },
+        { label: "Истёкших", value: data.clients?.expired ?? "—", color: "text-red-400",      bg: "rgba(239,68,68,0.08)",  border: "rgba(239,68,68,0.15)"   },
+        { label: "Заказов",  value: data.orders?.pending  ?? "—", color: "text-yellow-400",   bg: "rgba(234,179,8,0.08)",  border: "rgba(234,179,8,0.15)"   },
       ].map(item => (
-        <div key={item.label} className="text-center">
-          <p className={`text-lg font-bold ${item.color ?? "text-white"}`}>{item.value}</p>
-          <p className="text-xs text-slate-500">{item.label}</p>
+        <div key={item.label} className="rounded-xl px-3 py-2.5 text-center"
+          style={{ background: item.bg, border: `1px solid ${item.border}` }}>
+          <p className={`text-xl font-bold ${item.color}`}>{item.value}</p>
+          <p className="text-[10px] text-slate-600 mt-0.5">{item.label}</p>
         </div>
       ))}
     </div>

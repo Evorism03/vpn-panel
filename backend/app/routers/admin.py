@@ -396,11 +396,12 @@ def stats(
     total   = db.query(Client).count()
     active  = db.query(Client).filter(Client.status == "active").count()
     expired = db.query(Client).filter(Client.status == "expired").count()
+    blocked = db.query(Client).filter(Client.status == "blocked").count()
     pending = db.query(Order).filter(Order.status == "pending").count()
     issued  = db.query(Order).filter(Order.status == "issued").count()
     dump    = awg_svc.awg_show_dump()
     return {
-        "clients": {"total": total, "active": active, "expired": expired},
+        "clients": {"total": total, "active": active, "expired": expired, "blocked": blocked},
         "orders":  {"pending": pending, "issued": issued},
         "dump":    dump,
     }
