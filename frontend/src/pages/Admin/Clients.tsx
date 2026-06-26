@@ -534,10 +534,14 @@ export default function Clients() {
 
   const allSelected = filtered.length > 0 && filtered.every(c => selected.has(c.id));
 
+  const onlineCount = Object.values(dumpMap).filter(
+    d => d.lastHandshake && (Date.now() - d.lastHandshake * 1000) < 3 * 60_000
+  ).length;
+
   return (
     <div className="pb-24">
       {/* Заголовок */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-xl font-semibold text-white mb-1">Клиенты</h1>
           <p className="text-sm text-slate-500">{total} записей</p>
@@ -546,6 +550,24 @@ export default function Clients() {
           <Plus size={16} /> Добавить
         </button>
       </div>
+
+      {/* Мини-статистика */}
+      {statsData && (
+        <div className="flex flex-wrap gap-2 mb-5">
+          {[
+            { label: "Активных",     value: statsData.clients?.active  ?? 0, color: "text-green-400",  bg: "rgba(34,197,94,0.1)",  border: "rgba(34,197,94,0.2)"  },
+            { label: "Истёкших",     value: statsData.clients?.expired ?? 0, color: "text-red-400",    bg: "rgba(239,68,68,0.1)",  border: "rgba(239,68,68,0.2)"  },
+            { label: "Заблокировано",value: statsData.clients?.blocked ?? 0, color: "text-orange-400", bg: "rgba(249,115,22,0.1)", border: "rgba(249,115,22,0.2)" },
+            { label: "Онлайн",       value: onlineCount,                     color: "text-blue-400",   bg: "rgba(59,130,246,0.1)", border: "rgba(59,130,246,0.2)" },
+          ].map(({ label, value, color, bg, border }) => (
+            <div key={label} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs"
+              style={{ background: bg, border: `1px solid ${border}` }}>
+              <span className={`font-bold ${color}`}>{value}</span>
+              <span className="text-slate-500">{label}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Поиск + выбрать все */}
       <div className="flex gap-2 mb-4">
