@@ -11,7 +11,8 @@ RUN apt-get update -qq && \
 https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
     > /etc/apt/sources.list.d/docker.list && \
     apt-get update -qq && \
-    apt-get install -y --no-install-recommends docker-ce-cli && \
+    apt-get install -y --no-install-recommends docker-ce-cli \
+        procps htop nano iputils-ping net-tools iproute2 sqlite3 && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
