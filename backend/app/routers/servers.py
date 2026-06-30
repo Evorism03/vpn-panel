@@ -68,6 +68,7 @@ def _server_dict(s: Server, status: str = "unknown") -> dict:
         "id": s.id, "name": s.name, "base_url": s.base_url,
         "token": decrypt(s.token) if s.token else "",
         "max_users": s.max_users,
+        "is_forbidden": s.max_users == -1,
         "is_active": s.is_active, "status": status,
         "created_at": s.created_at.isoformat() if s.created_at else None,
     }
@@ -92,6 +93,7 @@ def _local_payload(db: Session, row: Server | None) -> dict:
         "max_users": max_u,
         "active_count": active,
         "is_full": max_u > 0 and active >= max_u,
+        "is_forbidden": max_u == -1,
     }
 
 
@@ -119,11 +121,11 @@ def update_local_server(
         row = Server(
             id=LOCAL_ID, name=body.name or "Локальный сервер",
             base_url="local", token="",
-            max_users=max(0, body.max_users),
+            max_users=max(-1, body.max_users),
         )
         db.add(row)
     else:
-        row.max_users = max(0, body.max_users)
+        row.max_users = max(-1, body.max_users)
         if body.name is not None:
             row.name = body.name.strip() or row.name
     db.commit()
@@ -190,7 +192,7 @@ def create_server(
         id=secrets.token_hex(8),
         name=name, base_url=base_url,
         token=encrypt(raw_token),
-        max_users=max(0, body.max_users or 0),
+        max_users=max(-1, body.max_users or 0),
     )
     db.add(server)
     db.commit()
@@ -219,7 +221,7 @@ def update_server(
     if body.token is not None:
         s.token = encrypt(body.token.strip())
     if body.max_users is not None:
-        s.max_users = max(0, body.max_users)
+        s.max_users = max(-1, body.max_users)
     if body.is_active is not None:
         s.is_active = body.is_active
     db.commit()

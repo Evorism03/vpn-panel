@@ -15,8 +15,9 @@ from sqlalchemy.orm import Session
 
 from ..auth import get_current_admin, hash_password, require_superadmin
 from ..config import get_settings
-from ..database import Admin, AuditLog, Client, Order, get_db
+from ..database import Admin, AuditLog, Client, Order, Server, get_db
 from ..services import awg as awg_svc
+from .servers import _json as _remote_json, _server_creds
 from ..services.orders import (
     create_client, delete_client_from_cfg,
     enforce_expired, process_order, renew_client, restore_client_peer,
@@ -44,6 +45,7 @@ class ClientCreate(BaseModel):
     term: str = "1m"
     contact: str = ""
     expires_at: Optional[str] = None
+    server_id: str = "local"
 
 
 class ClientUpdate(BaseModel):
@@ -90,10 +92,34 @@ def add_client(
     db: Session = Depends(get_db),
     admin: Admin = Depends(get_current_admin),
 ):
-    result = create_client(db, body.name.strip(), body.term, body.contact, body.expires_at)
-    log(db, "client.create", "client", result["id"], admin,
-        {"name": body.name, "term": body.term})
-    return {"client": result}
+    server_id = (body.server_id or "local").strip()
+
+    if server_id == "local":
+        result = create_client(db, body.name.strip(), body.term, body.contact, body.expires_at)
+        log(db, "client.create", "client", result["id"], admin,
+            {"name": body.name, "term": body.term, "server_id": "local", "server_name": "Локальный"})
+        return {"client": result}
+
+    # Remote server
+    s = db.query(Server).filter(Server.id == server_id).first()
+    if not s:
+        raise HTTPException(404, "Server not found")
+    if not s.is_active:
+        raise HTTPException(400, "Сервер отключён")
+    if s.max_users == -1:
+        raise HTTPException(403, f"Создание клиентов на сервере «{s.name}» запрещено")
+
+    payload: dict = {"name": body.name.strip(), "term": body.term, "contact": body.contact or ""}
+    if body.expires_at:
+        payload["expires_at"] = body.expires_at
+
+    remote_result = _remote_json(_server_creds(s), "POST", "/admin/clients", payload)
+    client = remote_result.get("client", remote_result)
+    client_id = client.get("id", "unknown")
+
+    log(db, "client.create", "client", client_id, admin,
+        {"name": body.name, "term": body.term, "server_id": server_id, "server_name": s.name})
+    return {"client": client}
 
 
 @router.patch("/clients/{client_id}")
@@ -124,8 +150,13 @@ def delete_client(
     client = db.query(Client).filter(Client.id == client_id).first()
     if not client:
         raise HTTPException(404, "Client not found")
+    server_name = "Локальный"
+    if client.server_id and client.server_id != "local":
+        s = db.query(Server).filter(Server.id == client.server_id).first()
+        server_name = s.name if s else client.server_id
     delete_client_from_cfg(client.public_key)
-    log(db, "client.delete", "client", client_id, admin, {"name": client.name})
+    log(db, "client.delete", "client", client_id, admin,
+        {"name": client.name, "server_id": client.server_id or "local", "server_name": server_name})
     db.delete(client)
     db.commit()
     return {"ok": True}

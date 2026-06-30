@@ -10,6 +10,7 @@ import Orders from "./pages/Admin/Orders";
 import Audit from "./pages/Admin/Audit";
 import Servers from "./pages/Admin/Servers";
 import Settings from "./pages/Admin/Settings";
+import TerminalPage from "./pages/Admin/Terminal";
 import { AdminLayout } from "./pages/Admin/Layout";
 
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -38,8 +39,9 @@ export default function App() {
       <Route path="/admin/servers"element={<AdminPage><Servers /></AdminPage>} />
       <Route path="/admin/orders" element={<AdminPage><Orders /></AdminPage>} />
       <Route path="/admin/audit"  element={<AdminPage><Audit /></AdminPage>} />
-      <Route path="/admin/settings" element={<AdminPage><Settings /></AdminPage>} />
-      <Route path="*"             element={<Navigate to="/" replace />} />
+      <Route path="/admin/settings"  element={<AdminPage><Settings /></AdminPage>} />
+      <Route path="/admin/terminal"  element={<AdminPage><TerminalPage /></AdminPage>} />
+      <Route path="*"               element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

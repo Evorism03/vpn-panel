@@ -24,8 +24,10 @@ cfg = get_settings()
 # ── Client creation ────────────────────────────────────────────────────────────
 
 def check_local_capacity(db: Session):
-    """Raise 429 if local server has a max_users limit and it's reached."""
+    """Raise 403/429 if local server forbids or has reached its client limit."""
     local = db.query(Server).filter(Server.id == "local").first()
+    if local and local.max_users == -1:
+        raise HTTPException(403, "Создание клиентов на локальном сервере запрещено")
     if local and local.max_users > 0:
         active = db.query(Client).filter(Client.status == "active").count()
         if active >= local.max_users:

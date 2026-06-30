@@ -4,7 +4,7 @@ import { ru } from "date-fns/locale";
 import { motion } from "framer-motion";
 import {
   UserPlus, UserMinus, RefreshCw, ShoppingBag,
-  ShieldOff, ShieldCheck, Trash2, ClipboardList,
+  ShieldOff, ShieldCheck, Trash2, ClipboardList, Server,
 } from "lucide-react";
 import { Spinner } from "../../components/ui/Spinner";
 import { api } from "../../api/client";
@@ -80,6 +80,13 @@ export default function Audit() {
                     <div className="min-w-0">
                       <p className={`text-sm font-medium ${meta.iconColor}`}>
                         {meta.label}
+                        {(() => {
+                          try {
+                            const d = JSON.parse(log.details || "{}");
+                            if (d.name) return <span className="font-normal text-slate-300"> — {d.name}</span>;
+                          } catch {}
+                          return null;
+                        })()}
                       </p>
                       <div className="flex flex-wrap items-center gap-x-2 mt-0.5">
                         {log.admin_username && (
@@ -90,6 +97,18 @@ export default function Audit() {
                             {log.entity_id}
                           </span>
                         )}
+                        {(() => {
+                          try {
+                            const d = JSON.parse(log.details || "{}");
+                            if (d.server_name) return (
+                              <span className="flex items-center gap-1 text-xs text-slate-600">
+                                <Server size={10} />
+                                {d.server_name}
+                              </span>
+                            );
+                          } catch {}
+                          return null;
+                        })()}
                       </div>
                     </div>
                     <span className="text-xs text-slate-700 shrink-0">

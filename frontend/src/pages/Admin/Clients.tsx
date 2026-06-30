@@ -378,6 +378,7 @@ export default function Clients() {
   const [clientName, setClientName] = useState("");
   const [contact, setContact]       = useState("");
   const [term, setTerm]             = useState("1m");
+  const [serverId, setServerId]     = useState("local");
   const [creating, setCreating]     = useState(false);
   const [error, setError]           = useState("");
   const [qrData, setQrData] = useState<{ config: string; name: string } | null>(null);
@@ -403,6 +404,21 @@ export default function Clients() {
   const data    = rawData?.clients ?? [];
   const total   = rawData?.total ?? 0;
   const hasMore = offset + LIMIT < total;
+
+  const { data: serversData } = useQuery({
+    queryKey: ["servers-for-create"],
+    queryFn: async () => {
+      const [localRes, remoteRes] = await Promise.all([
+        api.get("/admin/servers/local"),
+        api.get("/admin/servers"),
+      ]);
+      return {
+        local: localRes.data as { id: string; name: string; max_users: number; is_forbidden: boolean; is_full: boolean },
+        remote: (remoteRes.data.servers ?? []) as Array<{ id: string; name: string; max_users: number; is_forbidden: boolean; is_active: boolean; status: string }>,
+      };
+    },
+    staleTime: 30_000,
+  });
 
   const { data: statsData } = useQuery({
     queryKey: ["admin-stats"],
@@ -519,10 +535,12 @@ export default function Clients() {
     if (!clientName.trim()) { setError("Введите имя"); return; }
     setError(""); setCreating(true);
     try {
-      await api.post("/admin/clients", { name: clientName.trim(), contact: contact.trim(), term });
+      await api.post("/admin/clients", {
+        name: clientName.trim(), contact: contact.trim(), term, server_id: serverId,
+      });
       qc.invalidateQueries({ queryKey: ["clients"] });
       setCreateOpen(false);
-      setClientName(""); setContact(""); setTerm("1m");
+      setClientName(""); setContact(""); setTerm("1m"); setServerId("local");
     } catch (e: any) {
       setError(e.response?.data?.detail || "Ошибка");
     } finally {
@@ -677,6 +695,43 @@ export default function Clients() {
               <option value="6m">6 месяцев</option>
               <option value="1y">1 год</option>
               <option value="forever">Бессрочно</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5">Сервер</label>
+            <select className="input" value={serverId} onChange={e => setServerId(e.target.value)}>
+              {/* Локальный сервер */}
+              {(() => {
+                const loc = serversData?.local;
+                const forbidden = loc?.is_forbidden;
+                const full = loc?.is_full;
+                const label = forbidden
+                  ? "Локальный — запрещено ✕"
+                  : full
+                  ? "Локальный — заполнен"
+                  : "Локальный";
+                return (
+                  <option value="local" disabled={!!forbidden}>
+                    {label}
+                  </option>
+                );
+              })()}
+              {/* Удалённые серверы */}
+              {(serversData?.remote ?? []).map(s => {
+                const disabled = s.is_forbidden || !s.is_active;
+                const suffix = s.is_forbidden
+                  ? " — запрещено ✕"
+                  : !s.is_active
+                  ? " — отключён"
+                  : s.status === "offline"
+                  ? " — офлайн"
+                  : "";
+                return (
+                  <option key={s.id} value={s.id} disabled={disabled}>
+                    {s.name}{suffix}
+                  </option>
+                );
+              })}
             </select>
           </div>
           {error && <p className="text-xs text-red-400">{error}</p>}

@@ -4,17 +4,18 @@ import { clsx } from "clsx";
 import { useSSE } from "../../hooks/useSSE";
 import {
   LayoutDashboard, Users, ShoppingCart, Settings,
-  LogOut, Shield, Menu, ClipboardList, Server, X,
+  LogOut, Shield, Menu, ClipboardList, Server, X, Terminal,
 } from "lucide-react";
 import { useAuthStore } from "../../store/auth";
 
 const NAV = [
-  { to: "/admin",          icon: LayoutDashboard, label: "Дашборд",  exact: true },
-  { to: "/admin/clients",  icon: Users,           label: "Клиенты"              },
-  { to: "/admin/servers",  icon: Server,          label: "Серверы"              },
-  { to: "/admin/orders",   icon: ShoppingCart,    label: "Заказы"               },
-  { to: "/admin/audit",    icon: ClipboardList,   label: "Аудит"                },
-  { to: "/admin/settings", icon: Settings,        label: "Настройки"            },
+  { to: "/admin",           icon: LayoutDashboard, label: "Дашборд",   exact: true },
+  { to: "/admin/clients",   icon: Users,           label: "Клиенты"               },
+  { to: "/admin/servers",   icon: Server,          label: "Серверы"               },
+  { to: "/admin/orders",    icon: ShoppingCart,    label: "Заказы"                },
+  { to: "/admin/audit",     icon: ClipboardList,   label: "Аудит"                 },
+  { to: "/admin/terminal",  icon: Terminal,        label: "Терминал", superadmin: true },
+  { to: "/admin/settings",  icon: Settings,        label: "Настройки"             },
 ];
 
 export function AdminLayout({ children }: { children: ReactNode }) {
@@ -64,7 +65,7 @@ export function AdminLayout({ children }: { children: ReactNode }) {
 
       {/* Nav */}
       <nav className="flex-1 px-2.5 py-3 space-y-0.5 overflow-y-auto">
-        {NAV.map(({ to, icon: Icon, label, exact }) => (
+        {NAV.filter(item => !item.superadmin || admin?.role === "superadmin").map(({ to, icon: Icon, label, exact, superadmin: _sa }) => (
           <NavLink
             key={to}
             to={to}

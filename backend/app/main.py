@@ -13,7 +13,7 @@ from slowapi.errors import RateLimitExceeded
 
 from .auth import bootstrap_admin, decode_token
 from .database import Client, SessionLocal, init_db
-from .routers import admin, auth, portal, shop, servers
+from .routers import admin, auth, portal, shop, servers, terminal
 from .services import email as email_svc
 from .services.awg import get_cfg_hash
 from .services.limiter import limiter
@@ -141,6 +141,7 @@ app.include_router(admin.router)
 app.include_router(servers.router)
 app.include_router(portal.router)
 app.include_router(shop.router)
+app.include_router(terminal.router)
 
 
 # ── SSE endpoint ───────────────────────────────────────────────────────────────
