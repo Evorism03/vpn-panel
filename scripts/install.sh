@@ -711,8 +711,12 @@ install_wdtt() {
   [ -f "$bin_src" ] || { log_warn "wdtt-server binary not found, skipping"; return 0; }
 
   spin_start "Устанавливаем wdtt-server…"
-  cp "$bin_src" /usr/local/bin/wdtt-server
-  chmod +x /usr/local/bin/wdtt-server
+  systemctl stop wdtt >/dev/null 2>&1 || true
+  # Copy to a temp file then rename — avoids "Text file busy" if the old
+  # binary is still mapped/running (rename replaces the inode atomically).
+  cp "$bin_src" /usr/local/bin/wdtt-server.new
+  chmod +x /usr/local/bin/wdtt-server.new
+  mv -f /usr/local/bin/wdtt-server.new /usr/local/bin/wdtt-server
   mkdir -p /etc/wdtt
   spin_stop
   log "Binary  ${DIM}→ /usr/local/bin/wdtt-server${R}"
