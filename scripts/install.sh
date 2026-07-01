@@ -19,6 +19,15 @@ fi
 
 # ─── Defaults ─────────────────────────────────────────────────────────────────
 APP_NAME="vpn-panel"
+AWG_AUTO_INSTALL="${AWG_AUTO_INSTALL:-}"   # yes | no
+AWG_UDP_PORT="${AWG_UDP_PORT:-51820}"
+AWG_CONTAINER_NAME="${AWG_CONTAINER_NAME:-amnezia-awg}"
+AWG_CONFIG_DIR="${AWG_CONFIG_DIR:-/opt/amnezia/awg}"
+
+WDTT_PORT="${WDTT_PORT:-56000}"
+WDTT_WG_PORT="${WDTT_WG_PORT:-56001}"
+WDTT_PASSWORD="${WDTT_PASSWORD:-}"
+WDTT_INSTALL="${WDTT_INSTALL:-}"   # yes | no
 INSTALL_DIR="${INSTALL_DIR:-/opt/vpn-panel}"
 PROJECT_SRC="${PROJECT_SRC:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/vpn-panel-backups}"
@@ -38,7 +47,7 @@ ACTION_MODE="${ACTION_MODE:-}"
 INSTALL_MODE="${INSTALL_MODE:-}"   # panel | agent
 
 STEP_N=0
-STEP_TOTAL=5
+STEP_TOTAL=7
 _SPIN_PID=''
 
 # ─── Detection cache (populated once by detect_environment) ───────────────────
@@ -335,6 +344,8 @@ write_env() {
     ensure_env_key "$env_path" "PANEL_NAME" "${PANEL_NAME:-VPN Panel}"
     ensure_env_key "$env_path" "LAVA_API_KEY" ""
     ensure_env_key "$env_path" "LAVA_SHOP_ID" ""
+    ensure_env_key "$env_path" "WDTT_SERVER"   ""
+    ensure_env_key "$env_path" "WDTT_PASSWORD" ""
     chmod 600 "$env_path"
     return
   fi
@@ -405,6 +416,10 @@ PRICE_1Y=${PRICE_1Y:-1499}
 # ── Branding ──────────────────────────────────────────────────────────────────
 PANEL_NAME=${PANEL_NAME:-VPN Panel}
 PANEL_DOMAIN=${PANEL_DOMAIN:-}
+
+# ── WDTT ──────────────────────────────────────────────────────────────────────
+WDTT_SERVER=${server_ip}:${WDTT_PORT}
+WDTT_PASSWORD=${WDTT_PASSWORD:-}
 EOF
   chmod 600 "$env_path"
   log "Config written  ${DIM}→ $env_path${R}"
@@ -535,9 +550,25 @@ wizard() {
   printf "  ${DIM}│${R}\n"
   printf "  ${DIM}│${R}  ${DIM}AmneziaWG${R}\n"
 
-  _prompt "AWG container"      "${_awg:-amnezia-awg}";    AWG_DOCKER_CONTAINER="$_ANS"
-  _prompt "AWG UDP port"       "${_wgp:-?}";               AWG_PORT="$_ANS"
-  [ -n "$AWG_PORT" ] || log_warn "AWG port not set — update SERVER_ENDPOINT in .env later"
+  if [ -z "$_awg" ]; then
+    printf "  ${DIM}│${R}  ${B}%-22s${R}  ${DIM}[${CY}%s${DIM}]${R}  " "Установить AWG?" "yes"
+    read -r _ANS; _ANS="${_ANS:-yes}"
+    case "$_ANS" in y|yes|Y|YES) AWG_AUTO_INSTALL="yes" ;; *) AWG_AUTO_INSTALL="no" ;; esac
+  else
+    AWG_AUTO_INSTALL="no"
+    log_dim "AWG уже запущен: $_awg"
+  fi
+
+  if [ "$AWG_AUTO_INSTALL" = "yes" ]; then
+    _prompt "AWG UDP порт"      "$AWG_UDP_PORT";           AWG_UDP_PORT="$_ANS"
+    _prompt "AWG контейнер"     "$AWG_CONTAINER_NAME";     AWG_CONTAINER_NAME="$_ANS"
+    AWG_DOCKER_CONTAINER="$AWG_CONTAINER_NAME"
+    AWG_PORT="$AWG_UDP_PORT"
+  else
+    _prompt "AWG container"     "${_awg:-amnezia-awg}";    AWG_DOCKER_CONTAINER="$_ANS"
+    _prompt "AWG UDP port"      "${_wgp:-?}";              AWG_PORT="$_ANS"
+    [ -n "$AWG_PORT" ] || log_warn "AWG port not set — update SERVER_ENDPOINT in .env later"
+  fi
 
   printf "  ${DIM}│${R}\n"
   printf "  ${DIM}│${R}  ${DIM}Admin account${R}\n"
@@ -565,7 +596,185 @@ wizard() {
     printf "  ${DIM}│${R}  ${DIM}·  Lava skipped — add keys to .env later${R}\n"
   fi
 
+  printf "  ${DIM}│${R}\n"
+  printf "  ${DIM}│${R}  ${DIM}WDTT (WireGuard over VK TURN)${R}\n"
+
+  printf "  ${DIM}│${R}  ${B}%-22s${R}  ${DIM}[${CY}%s${DIM}]${R}  " "Установить WDTT?" "yes"
+  read -r _ANS; _ANS="${_ANS:-yes}"
+  case "$_ANS" in y|yes|Y|YES) WDTT_INSTALL="yes" ;; *) WDTT_INSTALL="no" ;; esac
+
+  if [ "$WDTT_INSTALL" = "yes" ]; then
+    _prompt "WDTT порт (UDP)"    "$WDTT_PORT";     WDTT_PORT="$_ANS"
+    _prompt_secret "Мастер-пароль WDTT";           [ -n "$_ANS" ] && WDTT_PASSWORD="$_ANS"
+    [ -n "$WDTT_PASSWORD" ] || WDTT_PASSWORD="$(gen_secret | cut -c1-24)"
+    _prompt "Telegram admin ID"  "";               WDTT_ADMIN_ID="$_ANS"
+    _prompt "Telegram bot token" "";               WDTT_BOT_TOKEN="$_ANS"
+  fi
+
   printf "  ${DIM}└──────────────────────────────────────────────────┘${R}\n\n"
+}
+
+# ─── AWG install ──────────────────────────────────────────────────────────────
+install_awg() {
+  [ "$AWG_AUTO_INSTALL" = "yes" ] || return 0
+
+  step "Установка AmneziaWG"
+
+  local cfg_dir="$AWG_CONFIG_DIR"
+  mkdir -p "$cfg_dir"
+
+  # Generate server keys inside a temporary awg container
+  spin_start "Загружаем образ amneziavpn/amneziawg…"
+  docker pull amneziavpn/amneziawg >/dev/null 2>&1
+  spin_stop
+  log "Образ загружен"
+
+  spin_start "Генерируем ключи сервера…"
+  local priv_key pub_key
+  priv_key="$(docker run --rm amneziavpn/amneziawg awg genkey 2>/dev/null)"
+  pub_key="$(printf '%s' "$priv_key" | docker run --rm -i amneziavpn/amneziawg awg pubkey 2>/dev/null)"
+  spin_stop
+
+  # Random AmneziaWG obfuscation params
+  rand_int() { shuf -i "${1}-${2}" -n 1 2>/dev/null || awk -v a="$1" -v b="$2" 'BEGIN{srand();print int(a+rand()*(b-a+1))}'; }
+  local Jc Jmin Jmax S1 S2 H1 H2 H3 H4
+  Jc="$(rand_int 3 10)"
+  Jmin="$(rand_int 50 150)"
+  Jmax="$(rand_int 200 900)"
+  S1="$(rand_int 15 50)"
+  S2="$(rand_int 15 50)"
+  H1="$(rand_int 1000000 2147483647)"
+  H2="$(rand_int 1000000 2147483647)"
+  H3="$(rand_int 1000000 2147483647)"
+  H4="$(rand_int 1000000 2147483647)"
+
+  cat > "$cfg_dir/awg0.conf" <<EOF
+[Interface]
+PrivateKey = $priv_key
+Address = 10.8.1.1/24
+ListenPort = $AWG_UDP_PORT
+Jc = $Jc
+Jmin = $Jmin
+Jmax = $Jmax
+S1 = $S1
+S2 = $S2
+H1 = $H1
+H2 = $H2
+H3 = $H3
+H4 = $H4
+EOF
+  chmod 600 "$cfg_dir/awg0.conf"
+  log "Конфиг создан  ${DIM}→ $cfg_dir/awg0.conf${R}"
+
+  # Stop old container if exists
+  docker rm -f "$AWG_CONTAINER_NAME" >/dev/null 2>&1 || true
+
+  spin_start "Запускаем контейнер $AWG_CONTAINER_NAME…"
+  docker run -d \
+    --name "$AWG_CONTAINER_NAME" \
+    --restart unless-stopped \
+    --cap-add NET_ADMIN \
+    --cap-add SYS_MODULE \
+    --sysctl net.ipv4.ip_forward=1 \
+    --device /dev/net/tun \
+    -v "$cfg_dir:/opt/amnezia/awg" \
+    -p "$AWG_UDP_PORT:$AWG_UDP_PORT/udp" \
+    amneziavpn/amneziawg >/dev/null 2>&1
+  spin_stop
+  log "Контейнер запущен  ${DIM}→ $AWG_CONTAINER_NAME:$AWG_UDP_PORT/udp${R}"
+
+  # Update detection cache so write_env picks it up
+  _DETECTED_AWG_CONTAINER="$AWG_CONTAINER_NAME"
+  _DETECTED_AWG_PORT="$AWG_UDP_PORT"
+  _DETECTED_AWG_CONFIG="$cfg_dir/awg0.conf"
+
+  # Open firewall
+  if have_cmd ufw; then
+    ufw allow "${AWG_UDP_PORT}/udp" >/dev/null 2>&1 || true
+    log_dim "ufw: открыт ${AWG_UDP_PORT}/udp"
+  elif have_cmd firewall-cmd; then
+    firewall-cmd --permanent --add-port="${AWG_UDP_PORT}/udp" >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+    log_dim "firewalld: открыт ${AWG_UDP_PORT}/udp"
+  fi
+
+  log "${BGN}AmneziaWG готов${R}  ${DIM}PublicKey: $pub_key${R}"
+}
+
+# ─── WDTT install ─────────────────────────────────────────────────────────────
+install_wdtt() {
+  [ "$WDTT_INSTALL" = "yes" ] || return 0
+
+  step "Установка WDTT сервера"
+
+  local bin_src="$PROJECT_SRC/scripts/wdtt-server"
+  [ -f "$bin_src" ] || { log_warn "wdtt-server binary not found, skipping"; return 0; }
+
+  spin_start "Устанавливаем wdtt-server…"
+  cp "$bin_src" /usr/local/bin/wdtt-server
+  chmod +x /usr/local/bin/wdtt-server
+  mkdir -p /etc/wdtt
+  spin_stop
+  log "Binary  ${DIM}→ /usr/local/bin/wdtt-server${R}"
+
+  # systemd service
+  cat > /etc/systemd/system/wdtt.service <<EOF
+[Unit]
+Description=WDTT - WireGuard over VK TURN Tunnel
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/wdtt-server \\
+  -listen 0.0.0.0:${WDTT_PORT} \\
+  -wg-port ${WDTT_WG_PORT} \\
+  -config-dir /etc/wdtt \\
+  -password ${WDTT_PASSWORD} \\
+  ${WDTT_ADMIN_ID:+-admin ${WDTT_ADMIN_ID} \\}
+  ${WDTT_BOT_TOKEN:+-bot-token ${WDTT_BOT_TOKEN}}
+Restart=on-failure
+RestartSec=5
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable wdtt >/dev/null 2>&1
+  systemctl restart wdtt
+  spin_stop
+
+  # Firewall
+  if have_cmd ufw; then
+    ufw allow "${WDTT_PORT}/udp" >/dev/null 2>&1 || true
+    ufw allow "${WDTT_WG_PORT}/udp" >/dev/null 2>&1 || true
+    log_dim "ufw: открыт ${WDTT_PORT}/udp и ${WDTT_WG_PORT}/udp"
+  elif have_cmd firewall-cmd; then
+    firewall-cmd --permanent --add-port="${WDTT_PORT}/udp" >/dev/null 2>&1 || true
+    firewall-cmd --permanent --add-port="${WDTT_WG_PORT}/udp" >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+    log_dim "firewalld: открыт ${WDTT_PORT}/udp и ${WDTT_WG_PORT}/udp"
+  fi
+
+  # Write password to file for reference
+  printf '%s\n' "$WDTT_PASSWORD" > /etc/wdtt/master_password
+  chmod 600 /etc/wdtt/master_password
+
+  log "WDTT сервер запущен  ${DIM}→ 0.0.0.0:${WDTT_PORT}${R}"
+}
+
+print_wdtt_summary() {
+  [ "$WDTT_INSTALL" = "yes" ] || return 0
+  local server_ip; server_ip="$(detect_public_ip)"
+  printf "  ${BGN}║${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}WDTT${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}───────────────────────────────────────────${R}\n"
+  printf "  ${BGN}║${R}   ${DIM}Адрес VPS    ${R}  ${WH}%s:%s${R}\n"  "$server_ip" "$WDTT_PORT"
+  printf "  ${BGN}║${R}   ${DIM}Пароль       ${R}  ${BYL}%s${R}\n"    "$WDTT_PASSWORD"
+  printf "  ${BGN}║${R}   ${DIM}Статус       ${R}  systemctl status wdtt\n"
+  printf "  ${BGN}║${R}   ${DIM}Логи         ${R}  journalctl -u wdtt -f\n"
 }
 
 # ─── Action selector ──────────────────────────────────────────────────────────
@@ -638,6 +847,7 @@ print_summary() {
   printf "  ${BGN}║${R}   ${DIM}Endpoint  ${R}  %s\n"                  "$endpoint"
   printf "  ${BGN}║${R}   ${DIM}Container ${R}  %s\n"                  "$awg_cont"
   printf "  ${BGN}║${R}\n"
+  print_wdtt_summary
   printf "  ${BGN}╠══════════════════════════════════════════════════╣${R}\n"
   printf "  ${BGN}║${R}  ${DIM}Config:  nano %s/.env${R}\n"            "$INSTALL_DIR"
   printf "  ${BGN}║${R}  ${DIM}Logs:    docker logs -f %s${R}\n"       "$BACKEND_CONTAINER"
@@ -887,6 +1097,7 @@ main() {
   esac
 
   check_ports
+  install_awg
   copy_project
   write_env
 
@@ -898,6 +1109,7 @@ main() {
   fi
 
   healthcheck
+  install_wdtt
   print_summary
 }
 

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from ..database import Client, Order, get_db
 from ..services.limiter import limiter
 from ..services.orders import renew_client
+from ..config import get_settings
 
 router = APIRouter(prefix="/api/portal", tags=["portal"])
 
@@ -83,15 +84,23 @@ def download_config(
     if not client or not client.config_text:
         raise HTTPException(404, "Config not available")
     if download:
-        # Force browser download as file
         filename = f"{client.name or client_id}.conf"
         return Response(
             content=client.config_text,
             media_type="text/plain",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
-    # Default: return JSON so frontend can use config text easily
-    return {"config": client.config_text, "filename": f"{client.name or client_id}.conf"}
+    s = get_settings()
+    result: dict = {
+        "config": client.config_text,
+        "filename": f"{client.name or client_id}.conf",
+    }
+    if s.wdtt_server and s.wdtt_password:
+        result["wdtt"] = {
+            "server": s.wdtt_server,
+            "password": s.wdtt_password,
+        }
+    return result
 
 
 @router.get("/client/{client_id}/orders")

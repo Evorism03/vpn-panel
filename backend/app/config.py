@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     fernet_key: str = ""
 
+    # WDTT (WireGuard over VK TURN) — leave empty to disable
+    wdtt_server: str = ""    # IP:port, e.g. "1.2.3.4:56000"
+    wdtt_password: str = ""  # master password set during deploy
+
     # Branding
     panel_name: str = "VPN Panel"
     panel_domain: str = "localhost"
