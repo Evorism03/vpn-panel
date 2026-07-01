@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Best-effort UTF-8 locale so `read` doesn't mangle multi-byte (e.g. Cyrillic)
+# input in the wizard. Never fatal — sanitize_utf8() below is the real guard.
+if locale -a 2>/dev/null | grep -qi '^C\.utf8$\|^C\.UTF-8$'; then
+  export LC_ALL="${LC_ALL:-C.UTF-8}" LANG="${LANG:-C.UTF-8}"
+elif locale -a 2>/dev/null | grep -qi '^en_US\.utf8$\|^en_US\.UTF-8$'; then
+  export LC_ALL="${LC_ALL:-en_US.UTF-8}" LANG="${LANG:-en_US.UTF-8}"
+fi
+
 # ─── Colours ──────────────────────────────────────────────────────────────────
 if [ -t 1 ] && [ "${NO_COLOR:-}" = "" ]; then
   R='\033[0m'
@@ -293,6 +301,20 @@ gen_secret() {
   fi
 }
 
+# Drop invalid UTF-8 byte sequences from a file in place (e.g. multi-byte
+# chars truncated by a non-UTF-8 terminal during `read`). Docker refuses to
+# load an env file containing invalid UTF-8, so this must run before use.
+sanitize_utf8() {
+  local f="$1"
+  have_cmd iconv || return 0
+  local tmp; tmp="$(mktemp)"
+  if iconv -f UTF-8 -t UTF-8 -c "$f" > "$tmp" 2>/dev/null; then
+    mv "$tmp" "$f"
+  else
+    rm -f "$tmp"
+  fi
+}
+
 # ─── File copy ────────────────────────────────────────────────────────────────
 copy_project() {
   step "Installing files"
@@ -346,6 +368,7 @@ write_env() {
     ensure_env_key "$env_path" "LAVA_SHOP_ID" ""
     ensure_env_key "$env_path" "WDTT_SERVER"   ""
     ensure_env_key "$env_path" "WDTT_PASSWORD" ""
+    sanitize_utf8 "$env_path"
     chmod 600 "$env_path"
     return
   fi
@@ -421,6 +444,7 @@ PANEL_DOMAIN=${PANEL_DOMAIN:-}
 WDTT_SERVER=${server_ip}:${WDTT_PORT}
 WDTT_PASSWORD=${WDTT_PASSWORD:-}
 EOF
+  sanitize_utf8 "$env_path"
   chmod 600 "$env_path"
   log "Config written  ${DIM}→ $env_path${R}"
 }
@@ -921,6 +945,7 @@ write_env_agent() {
 
   if [ -f "$env_path" ]; then
     log_info "Existing config preserved"
+    sanitize_utf8 "$env_path"
     chmod 600 "$env_path"
     return
   fi
@@ -982,6 +1007,7 @@ PRICE_6M=0
 PRICE_1Y=0
 PANEL_NAME=Agent
 EOF
+  sanitize_utf8 "$env_path"
   chmod 600 "$env_path"
   log "Config written  ${DIM}→ $env_path${R}"
 }
