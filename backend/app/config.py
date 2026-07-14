@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     # Data
     data_dir: str = "./data"
     db_path: str = "./data/vpn.db"
+    releases_dir: str = "./data/releases"
 
     # Lava
     lava_api_key: str = ""

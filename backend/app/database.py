@@ -101,6 +101,19 @@ class Server(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class Release(Base):
+    __tablename__ = "releases"
+
+    id          = Column(String, primary_key=True)
+    platform    = Column(String, nullable=False, index=True)   # android | windows
+    version     = Column(String, nullable=False)
+    filename    = Column(String, nullable=False)
+    size_bytes  = Column(Integer, default=0)
+    notes       = Column(Text, default="")
+    uploaded_by = Column(String, nullable=True)
+    created_at  = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 

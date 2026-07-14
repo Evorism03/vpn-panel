@@ -4,7 +4,7 @@ import { clsx } from "clsx";
 import { useSSE } from "../../hooks/useSSE";
 import {
   LayoutDashboard, Users, ShoppingCart, Settings,
-  LogOut, Shield, Menu, ClipboardList, Server, X, Terminal,
+  LogOut, Shield, Menu, ClipboardList, Server, X, Terminal, Package,
 } from "lucide-react";
 import { useAuthStore } from "../../store/auth";
 
@@ -14,6 +14,7 @@ const NAV = [
   { to: "/admin/servers",   icon: Server,          label: "Серверы"               },
   { to: "/admin/orders",    icon: ShoppingCart,    label: "Заказы"                },
   { to: "/admin/audit",     icon: ClipboardList,   label: "Аудит"                 },
+  { to: "/admin/releases",  icon: Package,         label: "Версии", superadmin: true },
   { to: "/admin/terminal",  icon: Terminal,        label: "Терминал", superadmin: true },
   { to: "/admin/settings",  icon: Settings,        label: "Настройки"             },
 ];

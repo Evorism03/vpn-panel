@@ -2,13 +2,29 @@ import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Shield, Zap, Globe, Lock, ChevronRight, Check,
-  Download, Smartphone, ChevronDown, Wifi, Eye,
+  Download, Smartphone, Monitor, ChevronDown, Wifi, Eye,
   ArrowRight, Star,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import { PurchaseModal } from "../Cabinet/PurchaseModal";
+
+// ── Latest client release lookup (404 = not published yet, not an error) ───────
+function useLatestRelease(platform: "android" | "windows") {
+  return useQuery({
+    queryKey: ["release-latest", platform],
+    queryFn: async () => {
+      try {
+        const { data } = await api.get("/releases/latest", { params: { platform } });
+        return data;
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 5 * 60_000,
+  });
+}
 
 // ── Animated grid background ──────────────────────────────────────────────────
 function GridBg() {
@@ -293,6 +309,9 @@ export default function Landing() {
     staleTime: 10 * 60_000,
   });
 
+  const { data: androidRelease } = useLatestRelease("android");
+  const { data: windowsRelease } = useLatestRelease("windows");
+
   const rawPrices = shopCfg?.prices ?? {};
   const plans = TERM_ORDER
     .filter(t => rawPrices[t] && rawPrices[t].amount > 0)
@@ -436,6 +455,42 @@ export default function Landing() {
           ))}
         </div>
       </section>
+
+      {/* ── App download ──────────────────────────────────────────────────── */}
+      {(androidRelease || windowsRelease) && (
+        <section className="relative z-10 max-w-5xl mx-auto px-6 mb-24">
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            className="text-center mb-10"
+          >
+            <p className="text-xs text-green-400 font-semibold tracking-widest uppercase mb-3">
+              Приложение
+            </p>
+            <h2 className="text-3xl font-bold text-white">Скачайте клиент</h2>
+          </motion.div>
+
+          <div className="flex flex-wrap justify-center gap-4">
+            {androidRelease && (
+              <a
+                href={`/api/releases/${androidRelease.id}/download`}
+                className="btn-primary text-sm px-6 py-3.5 rounded-2xl gap-2"
+              >
+                <Smartphone size={16} /> Android · v{androidRelease.version}
+              </a>
+            )}
+            {windowsRelease && (
+              <a
+                href={`/api/releases/${windowsRelease.id}/download`}
+                className="btn-ghost text-sm px-6 py-3.5 rounded-2xl gap-2"
+              >
+                <Monitor size={16} /> Windows · v{windowsRelease.version}
+              </a>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* ── How it works ──────────────────────────────────────────────────── */}
       <section className="relative z-10 max-w-5xl mx-auto px-6 mb-28">
