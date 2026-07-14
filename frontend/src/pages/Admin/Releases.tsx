@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Upload, Trash2, Package, Smartphone, Monitor } from "lucide-react";
+import { Upload, Trash2, Package, Smartphone, Monitor, FileUp, X } from "lucide-react";
 import { Card } from "../../components/ui/Card";
 import { Spinner } from "../../components/ui/Spinner";
 import { api } from "../../api/client";
@@ -20,6 +20,7 @@ export default function Releases() {
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["releases"],
@@ -72,7 +73,7 @@ export default function Releases() {
         <div className="grid sm:grid-cols-2 gap-3 mb-3">
           <div>
             <label className="block text-xs text-slate-400 mb-1.5">Платформа</label>
-            <select className="input" value={platform} onChange={e => setPlatform(e.target.value)}>
+            <select className="input" value={platform} onChange={e => { setPlatform(e.target.value); setFile(null); }}>
               <option value="android">Android (.apk)</option>
               <option value="windows">Windows (.exe)</option>
             </select>
@@ -92,11 +93,41 @@ export default function Releases() {
           </label>
           <input
             key={platform}
-            className="input"
+            ref={fileInputRef}
             type="file"
             accept={platform === "android" ? ".apk" : ".exe"}
             onChange={e => setFile(e.target.files?.[0] || null)}
+            className="hidden"
           />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-sm text-left transition-colors hover:bg-white/5"
+            style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+          >
+            <FileUp size={15} className="text-slate-500 shrink-0" />
+            {file ? (
+              <span className="flex-1 min-w-0 flex items-center gap-2">
+                <span className="text-white truncate">{file.name}</span>
+                <span className="text-slate-500 text-xs shrink-0">
+                  {(file.size / 1024 / 1024).toFixed(1)} МБ
+                </span>
+              </span>
+            ) : (
+              <span className="flex-1 text-slate-500">
+                Выбрать файл ({platform === "android" ? ".apk" : ".exe"})
+              </span>
+            )}
+            {file && (
+              <span
+                role="button"
+                onClick={e => { e.stopPropagation(); setFile(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}
+                className="p-1 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors shrink-0"
+              >
+                <X size={13} />
+              </span>
+            )}
+          </button>
         </div>
         {error && <p className="text-xs text-red-400 mb-3">{error}</p>}
         <button className="btn-primary text-sm px-4 py-2" onClick={upload} disabled={uploading}>
