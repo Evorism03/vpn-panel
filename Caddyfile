@@ -1,0 +1,11 @@
+## Set DOMAIN in .env (e.g. DOMAIN=myvpn.ru) — Caddy will automatically obtain
+## and renew a free Let's Encrypt certificate for it.
+{$DOMAIN} {
+    reverse_proxy frontend:80
+}
+
+## Catch-all for plain HTTP by raw IP (e.g. the Flutter client hitting
+## http://<server-ip>:80 directly) — kept working exactly as before, no TLS.
+:80 {
+    reverse_proxy frontend:80
+}

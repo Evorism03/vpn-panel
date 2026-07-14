@@ -14,13 +14,34 @@ services:
     build: ./frontend
     container_name: vpn-panel-frontend
     restart: unless-stopped
-    ports:
-      - "${PANEL_HTTP_BIND:-0.0.0.0}:${PANEL_HTTP_PORT:-8080}:80"
+    # No host port published — only Caddy is exposed externally now,
+    # frontend is reached internally via the "frontend" service name.
     depends_on:
       - backend
+    networks:
+      - vpn-panel-net
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: vpn-panel-caddy
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
     networks:
       - vpn-panel-net
 
 networks:
   vpn-panel-net:
     driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

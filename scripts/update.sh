@@ -32,7 +32,7 @@ tar --exclude='.git' --exclude='.env' --exclude='data' \
 
 echo "→ Rebuilding and restarting containers"
 cd "$INSTALL_DIR"
-docker compose up -d --build backend frontend
+docker compose up -d --build backend frontend caddy
 
 echo "→ Waiting for backend health check…"
 for _ in $(seq 1 30); do

@@ -458,7 +458,7 @@ start_containers() {
     || docker network create "$NETWORK_NAME" >/dev/null
   docker rm -f "$FRONTEND_CONTAINER" "$BACKEND_CONTAINER" >/dev/null 2>&1 || true
   spin_start "Building images…"
-  $cmd up -d --build backend frontend >/dev/null 2>&1
+  $cmd up -d --build backend frontend caddy >/dev/null 2>&1
   spin_stop
   log "Containers started"
 }
