@@ -483,7 +483,9 @@ export default function Landing() {
             {windowsRelease && (
               <a
                 href={`/api/releases/${windowsRelease.id}/download`}
-                className="btn-ghost text-sm px-6 py-3.5 rounded-2xl gap-2"
+                className="inline-flex items-center justify-center gap-2 text-sm font-medium px-6 py-3.5 rounded-2xl
+                  text-white transition-all duration-150 hover:bg-white/10"
+                style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.18)" }}
               >
                 <Monitor size={16} /> Windows · v{windowsRelease.version}
               </a>

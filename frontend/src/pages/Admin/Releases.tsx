@@ -20,6 +20,7 @@ export default function Releases() {
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState<{ loaded: number; total: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data, isLoading } = useQuery({
@@ -36,20 +37,22 @@ export default function Releases() {
   async function upload() {
     if (!file) { setError("Выберите файл"); return; }
     if (!version.trim()) { setError("Укажите версию"); return; }
-    setError(""); setUploading(true);
+    setError(""); setUploading(true); setProgress({ loaded: 0, total: file.size });
     try {
       const fd = new FormData();
       fd.append("platform", platform);
       fd.append("version", version.trim());
       fd.append("notes", notes.trim());
       fd.append("file", file);
-      await api.post("/admin/releases", fd);
+      await api.post("/admin/releases", fd, {
+        onUploadProgress: (e) => setProgress({ loaded: e.loaded, total: e.total ?? file.size }),
+      });
       qc.invalidateQueries({ queryKey: ["releases"] });
       setVersion(""); setNotes(""); setFile(null);
     } catch (e: any) {
       setError(e.response?.data?.detail || "Ошибка загрузки");
     } finally {
-      setUploading(false);
+      setUploading(false); setProgress(null);
     }
   }
 
@@ -130,9 +133,32 @@ export default function Releases() {
           </button>
         </div>
         {error && <p className="text-xs text-red-400 mb-3">{error}</p>}
+
+        {progress && (
+          <div className="mb-3">
+            <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5">
+              <span>
+                {(progress.loaded / 1024 / 1024).toFixed(1)} / {(progress.total / 1024 / 1024).toFixed(1)} МБ
+              </span>
+              <span className="text-green-400 font-medium">
+                {Math.round((progress.loaded / Math.max(progress.total, 1)) * 100)}%
+              </span>
+            </div>
+            <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.08)" }}>
+              <div
+                className="h-full rounded-full transition-all duration-150"
+                style={{
+                  width: `${Math.round((progress.loaded / Math.max(progress.total, 1)) * 100)}%`,
+                  background: "#22c55e",
+                }}
+              />
+            </div>
+          </div>
+        )}
+
         <button className="btn-primary text-sm px-4 py-2" onClick={upload} disabled={uploading}>
           {uploading ? <Spinner className="w-4 h-4" /> : <Upload size={14} />}
-          Загрузить
+          {uploading ? "Загрузка..." : "Загрузить"}
         </button>
       </Card>
 
