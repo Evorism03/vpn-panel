@@ -40,6 +40,8 @@ INSTALL_DIR="${INSTALL_DIR:-/opt/vpn-panel}"
 PROJECT_SRC="${PROJECT_SRC:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 BACKUP_DIR="${BACKUP_DIR:-/opt/vpn-panel-backups}"
 
+# Only used by the no-docker-compose fallback (start_manually) — the normal
+# compose path is served entirely through Caddy on 80/443, see Caddyfile.
 PANEL_HTTP_PORT="${PANEL_HTTP_PORT:-8080}"
 PANEL_HTTP_BIND="${PANEL_HTTP_BIND:-0.0.0.0}"
 BACKEND_PORT="${BACKEND_PORT:-8090}"
@@ -48,6 +50,8 @@ NETWORK_NAME="${NETWORK_NAME:-vpn-panel-net}"
 
 BACKEND_CONTAINER="${BACKEND_CONTAINER:-vpn-panel-backend}"
 FRONTEND_CONTAINER="${FRONTEND_CONTAINER:-vpn-panel-frontend}"
+CADDY_CONTAINER="${CADDY_CONTAINER:-vpn-panel-caddy}"
+DOMAIN="${DOMAIN:-}"
 
 SKIP_DOCKER_INSTALL="${SKIP_DOCKER_INSTALL:-0}"
 FORCE_PORT="${FORCE_PORT:-0}"
@@ -184,14 +188,13 @@ port_busy() {
 
 check_ports() {
   [ "$FORCE_PORT" = "1" ] && return
-  if port_busy "$PANEL_HTTP_PORT"; then
-    local owner; owner="$(docker ps --filter "publish=$PANEL_HTTP_PORT" --format '{{.Names}}' 2>/dev/null | head -1 || true)"
-    [ "$owner" = "$FRONTEND_CONTAINER" ] || fail "Port $PANEL_HTTP_PORT busy. Use PANEL_HTTP_PORT=8081 or FORCE_PORT=1."
-  fi
-  if port_busy "$BACKEND_PORT"; then
-    local owner; owner="$(docker ps --filter "publish=$BACKEND_PORT" --format '{{.Names}}' 2>/dev/null | head -1 || true)"
-    [ "$owner" = "$BACKEND_CONTAINER" ] || fail "Port $BACKEND_PORT busy. Use BACKEND_PORT=8091 or FORCE_PORT=1."
-  fi
+  # Caddy is the only thing published to the host now (80 + 443).
+  for p in 80 443; do
+    if port_busy "$p"; then
+      local owner; owner="$(docker ps --filter "publish=$p" --format '{{.Names}}' 2>/dev/null | head -1 || true)"
+      [ "$owner" = "$CADDY_CONTAINER" ] || fail "Port $p busy. Free it, or set FORCE_PORT=1 to ignore."
+    fi
+  done
 }
 
 # ─── Detection ────────────────────────────────────────────────────────────────
@@ -368,6 +371,7 @@ write_env() {
     ensure_env_key "$env_path" "LAVA_SHOP_ID" ""
     ensure_env_key "$env_path" "WDTT_SERVER"   ""
     ensure_env_key "$env_path" "WDTT_PASSWORD" ""
+    ensure_env_key "$env_path" "DOMAIN"        "${DOMAIN:-}"
     sanitize_utf8 "$env_path"
     chmod 600 "$env_path"
     return
@@ -398,6 +402,12 @@ write_env() {
   local secret_key;     secret_key="$(gen_secret)"
   local admin_password; admin_password="$(gen_secret | cut -c1-20)"
 
+  # Caddy serves the panel on 80/443 now — HTTPS via the domain if set,
+  # otherwise plain HTTP by IP (see Caddyfile).
+  local default_panel_url
+  if [ -n "${DOMAIN:-}" ]; then default_panel_url="https://$DOMAIN"
+  else default_panel_url="http://$server_ip"; fi
+
   cat > "$env_path" <<EOF
 # ── Auth ──────────────────────────────────────────────────────────────────────
 SECRET_KEY=$secret_key
@@ -427,8 +437,8 @@ DB_PATH=/data/vpn.db
 # ── Lava ──────────────────────────────────────────────────────────────────────
 LAVA_API_KEY=${LAVA_API_KEY:-}
 LAVA_SHOP_ID=${LAVA_SHOP_ID:-}
-LAVA_SUCCESS_URL=${LAVA_SUCCESS_URL:-http://$server_ip:$PANEL_HTTP_PORT/cabinet}
-LAVA_FAIL_URL=${LAVA_FAIL_URL:-http://$server_ip:$PANEL_HTTP_PORT}
+LAVA_SUCCESS_URL=${LAVA_SUCCESS_URL:-$default_panel_url/cabinet}
+LAVA_FAIL_URL=${LAVA_FAIL_URL:-$default_panel_url}
 
 # ── Pricing (RUB) ─────────────────────────────────────────────────────────────
 PRICE_1M=${PRICE_1M:-199}
@@ -438,7 +448,10 @@ PRICE_1Y=${PRICE_1Y:-1499}
 
 # ── Branding ──────────────────────────────────────────────────────────────────
 PANEL_NAME=${PANEL_NAME:-VPN Panel}
-PANEL_DOMAIN=${PANEL_DOMAIN:-}
+PANEL_DOMAIN=${PANEL_DOMAIN:-${DOMAIN:-}}
+
+# ── Domain / HTTPS (Caddy) ────────────────────────────────────────────────────
+DOMAIN=${DOMAIN:-}
 
 # ── WDTT ──────────────────────────────────────────────────────────────────────
 WDTT_SERVER=${server_ip}:${WDTT_PORT}
@@ -456,13 +469,15 @@ start_containers() {
   cd "$INSTALL_DIR"
   docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 \
     || docker network create "$NETWORK_NAME" >/dev/null
-  docker rm -f "$FRONTEND_CONTAINER" "$BACKEND_CONTAINER" >/dev/null 2>&1 || true
+  docker rm -f "$FRONTEND_CONTAINER" "$BACKEND_CONTAINER" "$CADDY_CONTAINER" >/dev/null 2>&1 || true
   spin_start "Building images…"
   $cmd up -d --build backend frontend caddy >/dev/null 2>&1
   spin_stop
   log "Containers started"
 }
 
+# Fallback for hosts without `docker compose`. No Caddy/domain/HTTPS here —
+# frontend is published directly on PANEL_HTTP_PORT, same as before.
 start_manually() {
   step "Building & starting containers"
   docker network inspect "$NETWORK_NAME" >/dev/null 2>&1 \
@@ -501,40 +516,29 @@ start_manually() {
 }
 
 # ─── Healthcheck ──────────────────────────────────────────────────────────────
+# One check through Caddy on :80 → frontend → backend proxy chain — if this
+# passes, all three are up and wired together correctly. No per-service port
+# checks needed anymore since only Caddy is published to the host.
 healthcheck() {
   step "Health check"
-  spin_start "Waiting for backend…"
+  spin_start "Waiting for panel…"
   local attempt=0 delay="0.3" elapsed="0"
   while true; do
     attempt=$(( attempt + 1 ))
-    if curl -fsS "http://127.0.0.1:$BACKEND_PORT/api/health" >/dev/null 2>&1 \
-      || wget -q -O /dev/null "http://127.0.0.1:$BACKEND_PORT/api/health" 2>/dev/null; then
-      spin_stop; log "Backend  ${BGN}online${R}  ${DIM}(~${elapsed}s)${R}"; break
+    if curl -fsS "http://127.0.0.1/api/health" >/dev/null 2>&1 \
+      || wget -q -O /dev/null "http://127.0.0.1/api/health" 2>/dev/null; then
+      spin_stop; log "Panel  ${BGN}online${R}  ${DIM}(~${elapsed}s)${R}"; break
     fi
     [ "$attempt" -ge 50 ] && {
       spin_stop
       docker logs --tail 40 "$BACKEND_CONTAINER" >&2 || true
-      fail "Backend did not start in time"
+      docker logs --tail 20 "$CADDY_CONTAINER" >&2 || true
+      fail "Panel did not start in time"
     }
     sleep "$delay"
     elapsed="$(awk "BEGIN{printf \"%.0f\", $elapsed + $delay}")"
     # Exponential backoff: 0.3 → 0.4 → 0.6 → … → max 2.0s
     delay="$(awk "BEGIN{d=$delay*1.4; print (d>2)?2:d}")"
-  done
-
-  spin_start "Checking frontend…"
-  local fdelay="0.3" fatt=0
-  while true; do
-    fatt=$(( fatt + 1 ))
-    if curl -fsSI "http://127.0.0.1:$PANEL_HTTP_PORT" >/dev/null 2>&1 \
-      || wget -q --spider "http://127.0.0.1:$PANEL_HTTP_PORT" 2>/dev/null; then
-      spin_stop; log "Frontend  ${BGN}online${R}"; break
-    fi
-    [ "$fatt" -ge 20 ] && {
-      spin_stop; log_warn "Frontend check failed — run: docker logs $FRONTEND_CONTAINER"; break
-    }
-    sleep "$fdelay"
-    fdelay="$(awk "BEGIN{d=$fdelay*1.5; print (d>2)?2:d}")"
   done
 }
 
@@ -569,7 +573,7 @@ wizard() {
   printf "  ${DIM}│${R}  ${DIM}Server${R}\n"
 
   _prompt "Public IP"          "$_ip";                     SERVER_IP="$_ANS"
-  _prompt "Panel port (HTTP)"  "$PANEL_HTTP_PORT";         PANEL_HTTP_PORT="$_ANS"
+  _prompt "Домен (Enter — пропустить, только IP)" "${DOMAIN}"; DOMAIN="$_ANS"
 
   printf "  ${DIM}│${R}\n"
   printf "  ${DIM}│${R}  ${DIM}AmneziaWG${R}\n"
@@ -851,7 +855,10 @@ print_summary() {
   local awg_cont;   awg_cont="$(env_value AWG_DOCKER_CONTAINER)"
   local panel_name; panel_name="$(env_value PANEL_NAME)"
   local server_ip;  server_ip="$(detect_public_ip)"
-  local panel_url="http://$server_ip:$PANEL_HTTP_PORT"
+  local domain;     domain="$(env_value DOMAIN)"
+  local panel_url
+  if [ -n "$domain" ]; then panel_url="https://$domain"
+  else panel_url="http://$server_ip"; fi
 
   printf "\n"
   printf "  ${BGN}╔══════════════════════════════════════════════════╗${R}\n"

@@ -1,6 +1,8 @@
-## Set DOMAIN in .env (e.g. DOMAIN=myvpn.ru) — Caddy will automatically obtain
-## and renew a free Let's Encrypt certificate for it.
-{$DOMAIN} {
+## Set DOMAIN in .env (e.g. DOMAIN=myvpn.ru) — Caddy automatically obtains and
+## renews a free Let's Encrypt certificate for it. Falls back to "localhost"
+## (no real cert, harmless) if DOMAIN isn't set yet, so Caddy always starts
+## cleanly even before a domain is configured.
+{$DOMAIN:localhost} {
     reverse_proxy frontend:80
 }
 
