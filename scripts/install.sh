@@ -260,6 +260,18 @@ check_ports() {
 # ─── Detection ────────────────────────────────────────────────────────────────
 _valid_ipv4() { printf '%s' "$1" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; }
 
+# Reject a domain containing non-ASCII characters — e.g. a Cyrillic
+# lookalike letter typed by accident with the wrong keyboard layout looks
+# identical in a terminal but is a completely different (non-existent)
+# domain. Caddy would silently try (and keep retrying) to get a Let's
+# Encrypt cert for that punycode domain forever, burning ACME rate-limit
+# attempts, while the site itself never gets a working certificate.
+# Empty is valid — domain/HTTPS is optional (plain IP still works).
+_valid_ascii_domain() {
+  [ -z "$1" ] && return 0
+  printf '%s' "$1" | LC_ALL=C grep -Eq '^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$'
+}
+
 # Fetch IP from one service into a file (runs in background)
 _fetch_ip_to_file() {
   local svc="$1" out="$2" ip=""
@@ -419,6 +431,13 @@ ensure_env_key() {
 # ─── Write .env ───────────────────────────────────────────────────────────────
 write_env() {
   local env_path="$INSTALL_DIR/.env"
+
+  # Backstop for non-interactive runs (DOMAIN passed as an env var, wizard
+  # skipped) — the wizard itself already validates when run interactively.
+  if ! _valid_ascii_domain "${DOMAIN:-}"; then
+    log_warn "DOMAIN='${DOMAIN:-}' has non-ASCII characters — ignoring it, HTTPS won't be configured"
+    DOMAIN=""
+  fi
 
   if [ -f "$env_path" ]; then
     log_info "Existing config preserved"
@@ -633,7 +652,11 @@ wizard() {
   printf "  ${DIM}│${R}  ${DIM}Server${R}\n"
 
   _prompt "Public IP"          "$_ip";                     SERVER_IP="$_ANS"
-  _prompt "Домен (Enter — пропустить, только IP)" "${DOMAIN}"; DOMAIN="$_ANS"
+  while :; do
+    _prompt "Домен (Enter — пропустить, только IP)" "${DOMAIN}"; DOMAIN="$_ANS"
+    _valid_ascii_domain "$DOMAIN" && break
+    printf "  ${DIM}│${R}  ${BRE}✗${R}  ${RE}Домен должен быть латиницей (a-z, 0-9, -, .) — проверь раскладку клавиатуры${R}\n"
+  done
 
   printf "  ${DIM}│${R}\n"
   printf "  ${DIM}│${R}  ${DIM}AmneziaWG${R}\n"
@@ -892,6 +915,47 @@ select_action() {
   esac
 }
 
+# The panel's SQLite DB (data/vpn.db) and the AmneziaWG server's live peer
+# list are two entirely separate things — wiping the DB alone does NOT
+# disconnect anyone. Their WireGuard configs stay valid, active peers on the
+# real server forever, invisible to the panel. "Full reinstall" means
+# genuinely fresh, so clear the live peers too.
+wipe_awg_peers() {
+  local awg_container="$_DETECTED_AWG_CONTAINER"
+  local awg_config="$_DETECTED_AWG_CONFIG"
+  [ -n "$awg_container" ] && [ -n "$awg_config" ] || return 0
+
+  step "Removing all WireGuard peers from $awg_container"
+  local iface; iface="$(basename "$awg_config" .conf)"
+  local ts; ts="$(date +%Y%m%d-%H%M%S)"
+
+  docker cp "$awg_container:$awg_config" "$BACKUP_DIR/awg0-$ts.conf" 2>/dev/null || true
+
+  # Keep [Interface], drop every [Peer] block
+  if ! docker exec "$awg_container" sh -c "
+    awk '/^\[Peer\]/{exit} {print}' '$awg_config' > '${awg_config}.tmp' \
+      && mv '${awg_config}.tmp' '$awg_config'
+  " >/dev/null 2>&1; then
+    log_warn "Could not strip peers from $awg_config"
+    return
+  fi
+
+  local bin=""
+  for candidate in awg wg /usr/bin/awg /usr/bin/wg /usr/local/bin/awg; do
+    docker exec "$awg_container" sh -c "command -v $candidate" >/dev/null 2>&1 && { bin="$candidate"; break; }
+  done
+  if [ -z "$bin" ]; then
+    log_warn "No awg/wg binary found in $awg_container — config cleared but kernel state not synced yet (will apply after container restart)"
+    return
+  fi
+
+  if docker exec -i "$awg_container" "$bin" syncconf "$iface" "$awg_config" >/dev/null 2>&1; then
+    log "All WireGuard peers removed  ${DIM}(backup → $BACKUP_DIR/awg0-$ts.conf)${R}"
+  else
+    log_warn "syncconf failed — peers may stay active until $awg_container restarts"
+  fi
+}
+
 wipe_data() {
   step "Wiping data"
   local ts; ts="$(date +%Y%m%d-%H%M%S)"
@@ -904,6 +968,7 @@ wipe_data() {
     log_dim "Data saved → $BACKUP_DIR/vpn-panel-data-$ts.tar.gz"
   }
   rm -f "$INSTALL_DIR/.env"
+  wipe_awg_peers
   log "Wiped"
 }
 

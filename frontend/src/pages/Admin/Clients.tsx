@@ -4,7 +4,7 @@ import {
   Plus, Search, Download, Trash2, RefreshCw,
   QrCode, ChevronDown, Key, Calendar, Clock,
   Wifi, WifiOff, Server, Mail, CheckSquare,
-  Square, X, RotateCcw, ShieldCheck, ShieldOff, Users,
+  Square, X, RotateCcw, ShieldCheck, ShieldOff, Users, Pencil,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
@@ -49,7 +49,7 @@ function formatBytes(bytes: number): string {
 // ── Одна карточка клиента ─────────────────────────────────────────────────────
 function ClientRow({
   client, selected, selectionActive, onSelect, onDownload, onQr, onRenew, onDelete,
-  onBlock, onUnblock,
+  onBlock, onUnblock, onEdit,
   dumpInfo, onDragStart, onDragEnter,
 }: {
   client: Client;
@@ -62,6 +62,7 @@ function ClientRow({
   onDelete: () => void;
   onBlock: () => void;
   onUnblock: () => void;
+  onEdit: () => void;
   dumpInfo?: { lastHandshake: number; rx: number; tx: number };
   onDragStart: (e: React.MouseEvent) => void;
   onDragEnter: () => void;
@@ -157,6 +158,10 @@ function ClientRow({
           <button onClick={onRenew} title="Продлить"
             className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
             <RefreshCw size={14} />
+          </button>
+          <button onClick={onEdit} title="Редактировать"
+            className="p-1.5 rounded-lg text-slate-500 hover:text-green-400 hover:bg-green-500/10 transition-colors">
+            <Pencil size={14} />
           </button>
           {client.status === "blocked" ? (
             <button onClick={onUnblock} title="Разблокировать"
@@ -383,6 +388,13 @@ export default function Clients() {
   const [error, setError]           = useState("");
   const [qrData, setQrData] = useState<{ config: string; name: string } | null>(null);
 
+  // Модалка редактирования (имя/контакт)
+  const [editClient, setEditClient] = useState<Client | null>(null);
+  const [editName, setEditName]     = useState("");
+  const [editContact, setEditContact] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError]   = useState("");
+
   // Пагинация
   const [offset, setOffset] = useState(0);
   const LIMIT = 200;
@@ -450,6 +462,33 @@ export default function Clients() {
     mutationFn: (id: string) => api.post(`/admin/clients/${id}/unblock`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["clients"] }),
   });
+
+  const updateMut = useMutation({
+    mutationFn: ({ id, name, contact }: { id: string; name: string; contact: string }) =>
+      api.patch(`/admin/clients/${id}`, { name, contact }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["clients"] }),
+  });
+
+  function openEdit(client: Client) {
+    setEditClient(client);
+    setEditName(client.name || "");
+    setEditContact(client.contact || "");
+    setEditError("");
+  }
+
+  async function saveEdit() {
+    if (!editClient) return;
+    if (!editName.trim()) { setEditError("Введите имя"); return; }
+    setEditError(""); setEditSaving(true);
+    try {
+      await updateMut.mutateAsync({ id: editClient.id, name: editName.trim(), contact: editContact.trim() });
+      setEditClient(null);
+    } catch (e: any) {
+      setEditError(e.response?.data?.detail || "Ошибка сохранения");
+    } finally {
+      setEditSaving(false);
+    }
+  }
 
   // Выбор с поддержкой Shift+click
   const handleSelect = useCallback((id: string, idx: number, e: React.MouseEvent) => {
@@ -639,6 +678,7 @@ export default function Clients() {
                 onRenew={() => renewMut.mutate({ id: client.id, term: "1m" })}
                 onBlock={() => blockMut.mutate(client.id)}
                 onUnblock={() => unblockMut.mutate(client.id)}
+                onEdit={() => openEdit(client)}
                 onDelete={() => {
                   if (confirm(`Удалить ${client.name}?`)) deleteMut.mutate(client.id);
                 }}
@@ -739,6 +779,29 @@ export default function Clients() {
             <button className="btn-ghost flex-1" onClick={() => setCreateOpen(false)}>Отмена</button>
             <button className="btn-primary flex-1" onClick={createClient} disabled={creating}>
               {creating ? <Spinner className="w-4 h-4" /> : "Создать"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Модалка редактирования */}
+      <Modal open={!!editClient} onClose={() => setEditClient(null)} title="Редактировать клиента" size="sm">
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5">Имя</label>
+            <input className="input" value={editName}
+              onChange={e => setEditName(e.target.value)} autoFocus />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5">Контакт (email/telegram)</label>
+            <input className="input" placeholder="ivan@example.com" value={editContact}
+              onChange={e => setEditContact(e.target.value)} />
+          </div>
+          {editError && <p className="text-xs text-red-400">{editError}</p>}
+          <div className="flex gap-2 pt-1">
+            <button className="btn-ghost flex-1" onClick={() => setEditClient(null)}>Отмена</button>
+            <button className="btn-primary flex-1" onClick={saveEdit} disabled={editSaving}>
+              {editSaving ? <Spinner className="w-4 h-4" /> : "Сохранить"}
             </button>
           </div>
         </div>
