@@ -172,6 +172,37 @@ $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
   log "Docker installed"
 }
 
+# Docker itself being present doesn't mean the `docker compose` plugin is —
+# e.g. it's missing on plain `docker.io` installs, or on any pre-existing
+# Docker setup that predates the plugin. Without it, the installer silently
+# falls back to start_manually() further down, which has no Caddy/HTTPS/domain
+# support at all. Make sure compose actually works instead of discovering
+# this the hard way after a "successful" install.
+ensure_compose() {
+  docker compose version >/dev/null 2>&1 && {
+    log "Docker Compose $(docker compose version --short 2>/dev/null || echo v2)"
+    return
+  }
+  have_cmd docker-compose && { log_dim "Using standalone docker-compose (v1)"; return; }
+
+  if [ "$SKIP_DOCKER_INSTALL" = "1" ] || ! have_cmd apt-get; then
+    log_warn "docker compose not found — Caddy/HTTPS won't be set up (legacy mode)"
+    return
+  fi
+
+  step "Installing Docker Compose plugin"
+  spin_start "apt-get install docker-compose-plugin…"
+  apt-get update -qq >/dev/null 2>&1
+  apt-get install -y -qq docker-compose-plugin >/dev/null 2>&1
+  spin_stop
+
+  if docker compose version >/dev/null 2>&1; then
+    log "Docker Compose $(docker compose version --short 2>/dev/null || echo v2)"
+  else
+    log_warn "Could not install docker compose — Caddy/HTTPS won't be set up (legacy mode)"
+  fi
+}
+
 compose_cmd() {
   docker compose version >/dev/null 2>&1 && { printf 'docker compose'; return; }
   have_cmd docker-compose && { printf 'docker-compose'; return; }
@@ -1102,6 +1133,7 @@ main() {
   banner
   require_root
   install_docker_if_missing
+  ensure_compose
 
   # Run all environment detections in parallel before wizard or config writing
   spin_start "Detecting environment…"

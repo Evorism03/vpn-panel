@@ -19,6 +19,15 @@ REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
   exit 1
 }
 
+if ! docker compose version >/dev/null 2>&1; then
+  echo "→ docker compose plugin missing, installing…"
+  apt-get update -qq && apt-get install -y -qq docker-compose-plugin
+  docker compose version >/dev/null 2>&1 || {
+    echo "Could not install docker compose — install it manually (docker-compose-plugin) and retry." >&2
+    exit 1
+  }
+fi
+
 echo "→ Pulling latest source in $REPO_DIR"
 git -C "$REPO_DIR" pull --ff-only
 
