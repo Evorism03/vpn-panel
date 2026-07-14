@@ -20,10 +20,22 @@ REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 }
 
 if ! docker compose version >/dev/null 2>&1; then
-  echo "→ docker compose plugin missing, installing…"
-  apt-get update -qq && apt-get install -y -qq docker-compose-plugin
+  echo "→ docker compose plugin missing — trying apt, then the official binary…"
+  apt-get update -qq >/dev/null 2>&1
+  apt-get install -y -qq docker-compose-plugin >/dev/null 2>&1
+
+  if ! docker compose version >/dev/null 2>&1; then
+    plugin_dir="/usr/local/lib/docker/cli-plugins"
+    url="https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)"
+    mkdir -p "$plugin_dir"
+    curl -fsSL "$url" -o "$plugin_dir/docker-compose" && chmod +x "$plugin_dir/docker-compose"
+  fi
+
   docker compose version >/dev/null 2>&1 || {
-    echo "Could not install docker compose — install it manually (docker-compose-plugin) and retry." >&2
+    echo "Could not set up docker compose. Install it manually:" >&2
+    echo "  sudo mkdir -p /usr/local/lib/docker/cli-plugins" >&2
+    echo "  sudo curl -SL \"https://github.com/docker/compose/releases/latest/download/docker-compose-linux-\$(uname -m)\" -o /usr/local/lib/docker/cli-plugins/docker-compose" >&2
+    echo "  sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose" >&2
     exit 1
   }
 fi

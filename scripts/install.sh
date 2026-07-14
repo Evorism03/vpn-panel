@@ -185,21 +185,50 @@ ensure_compose() {
   }
   have_cmd docker-compose && { log_dim "Using standalone docker-compose (v1)"; return; }
 
-  if [ "$SKIP_DOCKER_INSTALL" = "1" ] || ! have_cmd apt-get; then
-    log_warn "docker compose not found — Caddy/HTTPS won't be set up (legacy mode)"
-    return
+  [ "$SKIP_DOCKER_INSTALL" = "1" ] && { log_warn "docker compose not found — Caddy/HTTPS won't be set up (legacy mode)"; return; }
+
+  # Try apt first (fast, but only works if the Docker CE apt repo is set up —
+  # plain distro `docker.io` installs usually don't have this package).
+  if have_cmd apt-get; then
+    step "Installing Docker Compose plugin (apt)"
+    local apt_log; apt_log="$(mktemp)"
+    if apt-get update -qq >"$apt_log" 2>&1 && apt-get install -y -qq docker-compose-plugin >>"$apt_log" 2>&1; then
+      rm -f "$apt_log"
+    else
+      log_warn "apt install failed, falling back to the official binary"
+      log_dim "$(tail -3 "$apt_log")"
+      rm -f "$apt_log"
+    fi
+    docker compose version >/dev/null 2>&1 && {
+      log "Docker Compose $(docker compose version --short 2>/dev/null || echo v2)"
+      return
+    }
   fi
 
-  step "Installing Docker Compose plugin"
-  spin_start "apt-get install docker-compose-plugin…"
-  apt-get update -qq >/dev/null 2>&1
-  apt-get install -y -qq docker-compose-plugin >/dev/null 2>&1
-  spin_stop
+  # Fall back to Docker's own binary release — works regardless of which apt
+  # repos are configured, as long as we can reach GitHub.
+  step "Installing Docker Compose (official binary)"
+  local plugin_dir="/usr/local/lib/docker/cli-plugins"
+  local arch; arch="$(uname -m)"
+  local url="https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${arch}"
+  mkdir -p "$plugin_dir"
+  local dl_log; dl_log="$(mktemp)"
+  if curl -fsSL "$url" -o "$plugin_dir/docker-compose" 2>"$dl_log"; then
+    chmod +x "$plugin_dir/docker-compose"
+  else
+    log_warn "Download failed:"
+    log_dim "$(tail -3 "$dl_log")"
+  fi
+  rm -f "$dl_log"
 
   if docker compose version >/dev/null 2>&1; then
     log "Docker Compose $(docker compose version --short 2>/dev/null || echo v2)"
   else
-    log_warn "Could not install docker compose — Caddy/HTTPS won't be set up (legacy mode)"
+    log_warn "Could not set up docker compose — Caddy/HTTPS won't be configured (legacy mode)."
+    log_warn "Install it manually and re-run:"
+    log_dim "sudo mkdir -p $plugin_dir"
+    log_dim "sudo curl -SL \"$url\" -o $plugin_dir/docker-compose"
+    log_dim "sudo chmod +x $plugin_dir/docker-compose"
   fi
 }
 
