@@ -155,7 +155,9 @@ def list_servers(
     db: Session = Depends(get_db),
     admin: Admin = Depends(get_current_admin),
 ):
-    servers = db.query(Server).order_by(Server.created_at).all()
+    # "local" — служебная строка с настройками локального сервера (см. _local_row),
+    # не настоящий удалённый сервер — не должна попадать в общий список.
+    servers = db.query(Server).filter(Server.id != LOCAL_ID).order_by(Server.created_at).all()
     if not servers:
         return {"servers": []}
 
@@ -208,6 +210,8 @@ def update_server(
     db: Session = Depends(get_db),
     admin: Admin = Depends(get_current_admin),
 ):
+    if server_id == LOCAL_ID:
+        raise HTTPException(400, "Используйте PATCH /servers/local для локального сервера")
     s = db.query(Server).filter(Server.id == server_id).first()
     if not s:
         raise HTTPException(404, "Server not found")
@@ -236,6 +240,8 @@ def delete_server(
     db: Session = Depends(get_db),
     admin: Admin = Depends(get_current_admin),
 ):
+    if server_id == LOCAL_ID:
+        raise HTTPException(400, "Локальный сервер нельзя удалить")
     s = db.query(Server).filter(Server.id == server_id).first()
     if not s:
         raise HTTPException(404, "Server not found")

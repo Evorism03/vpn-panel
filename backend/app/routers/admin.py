@@ -61,6 +61,10 @@ class ClientExpiry(BaseModel):
     expires_at: Optional[str] = None
 
 
+class ClientTransfer(BaseModel):
+    target_server_id: str
+
+
 @router.get("/clients")
 def list_clients(
     status: Optional[str] = Query(None),
@@ -238,6 +242,52 @@ def get_config(
     if not client or not client.config_text:
         raise HTTPException(404, "Config not found")
     return {"config": client.config_text, "filename": f"{client.name or client_id}.conf"}
+
+
+@router.post("/clients/{client_id}/transfer")
+def transfer_client(
+    client_id: str,
+    body: ClientTransfer,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(get_current_admin),
+):
+    """Move a client from this (local) server to another registered server.
+
+    Re-creates the client on the target with fresh keys (old config is
+    revoked), then removes it here — the client gets a new config to install.
+    """
+    client = db.query(Client).filter(Client.id == client_id).first()
+    if not client:
+        raise HTTPException(404, "Client not found")
+
+    target_id = body.target_server_id.strip()
+    if not target_id or target_id == "local":
+        raise HTTPException(400, "Укажите другой (удалённый) сервер для переноса")
+
+    target = db.query(Server).filter(Server.id == target_id).first()
+    if not target:
+        raise HTTPException(404, "Целевой сервер не найден")
+    if not target.is_active:
+        raise HTTPException(400, "Целевой сервер отключён")
+    if target.max_users == -1:
+        raise HTTPException(403, f"Создание клиентов на сервере «{target.name}» запрещено")
+
+    payload: dict = {"name": client.name, "term": "1m", "contact": client.contact or ""}
+    if client.expires_at:
+        payload["expires_at"] = client.expires_at
+
+    remote_result = _remote_json(_server_creds(target), "POST", "/admin/clients", payload)
+    new_client = remote_result.get("client", remote_result)
+
+    # Only remove the local copy once the target confirms creation.
+    delete_client_from_cfg(client.public_key)
+    db.delete(client)
+    db.commit()
+
+    log(db, "client.transfer", "client", client_id, admin,
+        {"name": client.name, "from_server": "local", "to_server": target_id,
+         "to_server_name": target.name, "new_client_id": new_client.get("id")})
+    return {"client": new_client}
 
 
 # ── Orders ─────────────────────────────────────────────────────────────────────

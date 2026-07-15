@@ -323,6 +323,7 @@ function LocalServerCard() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [maxInput, setMaxInput] = useState("0");
+  const [forbidden, setForbidden] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const { data: local, refetch } = useQuery({
@@ -332,19 +333,27 @@ function LocalServerCard() {
     refetchInterval: 30_000,
   });
 
-  const active   = local?.active_count ?? 0;
-  const maxUsers = local?.max_users ?? 0;
-  const isFull   = local?.is_full ?? false;
-  const pct      = maxUsers > 0 ? Math.min(100, Math.round((active / maxUsers) * 100)) : null;
+  const active     = local?.active_count ?? 0;
+  const maxUsers    = local?.max_users ?? 0;
+  const isFull      = local?.is_full ?? false;
+  const isForbidden = local?.is_forbidden ?? false;
+  const pct         = maxUsers > 0 ? Math.min(100, Math.round((active / maxUsers) * 100)) : null;
 
-  function openEdit() { setMaxInput(String(maxUsers)); setEditing(true); }
+  function openEdit() {
+    setMaxInput(String(maxUsers > 0 ? maxUsers : 0));
+    setForbidden(isForbidden);
+    setEditing(true);
+  }
 
   async function saveLimit() {
     setSaving(true);
     try {
-      await api.patch("/admin/servers/local", { max_users: parseInt(maxInput) || 0 });
+      await api.patch("/admin/servers/local", {
+        max_users: forbidden ? -1 : (parseInt(maxInput) || 0),
+      });
       await refetch();
       qc.invalidateQueries({ queryKey: ["admin-stats"] });
+      qc.invalidateQueries({ queryKey: ["servers-for-create"] });
       setEditing(false);
     } finally {
       setSaving(false);
@@ -367,7 +376,11 @@ function LocalServerCard() {
           <div className="flex items-center gap-2 mb-1">
             <p className="text-sm font-semibold text-white">{local?.name ?? "Локальный сервер"}</p>
             <StatusDot status="online" />
-            {isFull && (
+            {isForbidden ? (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/15 border border-red-500/30 text-red-400">
+                Новые клиенты запрещены
+              </span>
+            ) : isFull && (
               <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/15 border border-red-500/30 text-red-400">
                 Заполнен
               </span>
@@ -376,18 +389,20 @@ function LocalServerCard() {
           <p className="text-xs text-slate-500 mb-2">AWG · этот сервер</p>
 
           {/* Capacity bar */}
-          <div className="flex items-center gap-3">
-            <div className="flex-1 h-1.5 rounded-full bg-white/8 overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ${barColor}`}
-                style={{ width: pct !== null ? `${pct}%` : "0%" }}
-              />
+          {!isForbidden && (
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-1.5 rounded-full bg-white/8 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+                  style={{ width: pct !== null ? `${pct}%` : "0%" }}
+                />
+              </div>
+              <span className="text-xs text-slate-400 shrink-0 tabular-nums">
+                {active}
+                {maxUsers > 0 ? ` / ${maxUsers}` : ""} активных
+              </span>
             </div>
-            <span className="text-xs text-slate-400 shrink-0 tabular-nums">
-              {active}
-              {maxUsers > 0 ? ` / ${maxUsers}` : ""} активных
-            </span>
-          </div>
+          )}
         </div>
 
         <button
@@ -408,23 +423,34 @@ function LocalServerCard() {
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden"
           >
-            <div className="mt-4 pt-4 border-t border-white/8 flex items-end gap-3">
-              <div className="flex-1">
-                <label className="block text-xs text-slate-400 mb-1.5">
-                  Макс. клиентов <span className="text-slate-600">(0 = без лимита)</span>
-                </label>
-                <input
-                  className="input"
-                  type="number" min="0"
-                  value={maxInput}
-                  onChange={e => setMaxInput(e.target.value)}
-                  autoFocus
-                />
+            <div className="mt-4 pt-4 border-t border-white/8 space-y-3">
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" className="w-4 h-4 accent-red-500 rounded"
+                  checked={forbidden}
+                  onChange={e => setForbidden(e.target.checked)} />
+                <span className="text-sm text-slate-300">
+                  Не создавать новых клиентов на этом сервере — только на удалённых
+                </span>
+              </label>
+              <div className="flex items-end gap-3">
+                <div className="flex-1">
+                  <label className="block text-xs text-slate-400 mb-1.5">
+                    Макс. клиентов <span className="text-slate-600">(0 = без лимита)</span>
+                  </label>
+                  <input
+                    className="input"
+                    type="number" min="0"
+                    value={maxInput}
+                    disabled={forbidden}
+                    onChange={e => setMaxInput(e.target.value)}
+                    autoFocus
+                  />
+                </div>
+                <button className="btn-ghost px-4 py-2" onClick={() => setEditing(false)}>Отмена</button>
+                <button className="btn-primary px-4 py-2" onClick={saveLimit} disabled={saving}>
+                  {saving ? <Spinner className="w-4 h-4" /> : "Сохранить"}
+                </button>
               </div>
-              <button className="btn-ghost px-4 py-2" onClick={() => setEditing(false)}>Отмена</button>
-              <button className="btn-primary px-4 py-2" onClick={saveLimit} disabled={saving}>
-                {saving ? <Spinner className="w-4 h-4" /> : "Сохранить"}
-              </button>
             </div>
           </motion.div>
         )}

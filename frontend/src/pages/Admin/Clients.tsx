@@ -5,6 +5,7 @@ import {
   QrCode, ChevronDown, Key, Calendar, Clock,
   Wifi, WifiOff, Server, Mail, CheckSquare,
   Square, X, RotateCcw, ShieldCheck, ShieldOff, Users, Pencil,
+  ArrowRightLeft,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
@@ -49,7 +50,7 @@ function formatBytes(bytes: number): string {
 // ── Одна карточка клиента ─────────────────────────────────────────────────────
 function ClientRow({
   client, selected, selectionActive, onSelect, onDownload, onQr, onRenew, onDelete,
-  onBlock, onUnblock, onEdit,
+  onBlock, onUnblock, onEdit, onTransfer,
   dumpInfo, onDragStart, onDragEnter,
 }: {
   client: Client;
@@ -63,6 +64,7 @@ function ClientRow({
   onBlock: () => void;
   onUnblock: () => void;
   onEdit: () => void;
+  onTransfer: () => void;
   dumpInfo?: { lastHandshake: number; rx: number; tx: number };
   onDragStart: (e: React.MouseEvent) => void;
   onDragEnter: () => void;
@@ -162,6 +164,10 @@ function ClientRow({
           <button onClick={onEdit} title="Редактировать"
             className="p-1.5 rounded-lg text-slate-500 hover:text-green-400 hover:bg-green-500/10 transition-colors">
             <Pencil size={14} />
+          </button>
+          <button onClick={onTransfer} title="Перенести на другой сервер"
+            className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
+            <ArrowRightLeft size={14} />
           </button>
           {client.status === "blocked" ? (
             <button onClick={onUnblock} title="Разблокировать"
@@ -395,6 +401,12 @@ export default function Clients() {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError]   = useState("");
 
+  // Модалка переноса на другой сервер
+  const [transferClient, setTransferClient] = useState<Client | null>(null);
+  const [transferTarget, setTransferTarget] = useState("");
+  const [transferSaving, setTransferSaving] = useState(false);
+  const [transferError, setTransferError]   = useState("");
+
   // Пагинация
   const [offset, setOffset] = useState(0);
   const LIMIT = 200;
@@ -474,6 +486,31 @@ export default function Clients() {
     setEditName(client.name || "");
     setEditContact(client.contact || "");
     setEditError("");
+  }
+
+  function openTransfer(client: Client) {
+    setTransferClient(client);
+    setTransferTarget("");
+    setTransferError("");
+  }
+
+  const transferMut = useMutation({
+    mutationFn: ({ id, target }: { id: string; target: string }) =>
+      api.post(`/admin/clients/${id}/transfer`, { target_server_id: target }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["clients"] }),
+  });
+
+  async function saveTransfer() {
+    if (!transferClient || !transferTarget) { setTransferError("Выберите сервер"); return; }
+    setTransferError(""); setTransferSaving(true);
+    try {
+      await transferMut.mutateAsync({ id: transferClient.id, target: transferTarget });
+      setTransferClient(null);
+    } catch (e: any) {
+      setTransferError(e.response?.data?.detail || "Ошибка переноса");
+    } finally {
+      setTransferSaving(false);
+    }
   }
 
   async function saveEdit() {
@@ -679,6 +716,7 @@ export default function Clients() {
                 onBlock={() => blockMut.mutate(client.id)}
                 onUnblock={() => unblockMut.mutate(client.id)}
                 onEdit={() => openEdit(client)}
+                onTransfer={() => openTransfer(client)}
                 onDelete={() => {
                   if (confirm(`Удалить ${client.name}?`)) deleteMut.mutate(client.id);
                 }}
@@ -802,6 +840,50 @@ export default function Clients() {
             <button className="btn-ghost flex-1" onClick={() => setEditClient(null)}>Отмена</button>
             <button className="btn-primary flex-1" onClick={saveEdit} disabled={editSaving}>
               {editSaving ? <Spinner className="w-4 h-4" /> : "Сохранить"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Модалка переноса на другой сервер */}
+      <Modal open={!!transferClient} onClose={() => setTransferClient(null)} title="Перенести клиента" size="sm">
+        <div className="space-y-3">
+          <p className="text-xs text-slate-500">
+            Клиент «{transferClient?.name}» будет создан заново на выбранном сервере
+            (с новым конфигом и ключами) и удалён отсюда. Старый конфиг перестанет работать —
+            выдайте клиенту новый после переноса.
+          </p>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5">Целевой сервер</label>
+            <select className="input" value={transferTarget} onChange={e => setTransferTarget(e.target.value)}>
+              <option value="" disabled>Выберите сервер...</option>
+              {(serversData?.remote ?? []).map(s => {
+                const disabled = s.is_forbidden || !s.is_active;
+                const suffix = s.is_forbidden
+                  ? " — запрещено ✕"
+                  : !s.is_active
+                  ? " — отключён"
+                  : s.status === "offline"
+                  ? " — офлайн"
+                  : "";
+                return (
+                  <option key={s.id} value={s.id} disabled={disabled}>
+                    {s.name}{suffix}
+                  </option>
+                );
+              })}
+            </select>
+            {(serversData?.remote ?? []).length === 0 && (
+              <p className="text-xs text-slate-600 mt-1.5">
+                Нет добавленных удалённых серверов — добавьте на странице «Серверы»
+              </p>
+            )}
+          </div>
+          {transferError && <p className="text-xs text-red-400">{transferError}</p>}
+          <div className="flex gap-2 pt-1">
+            <button className="btn-ghost flex-1" onClick={() => setTransferClient(null)}>Отмена</button>
+            <button className="btn-primary flex-1" onClick={saveTransfer} disabled={transferSaving || !transferTarget}>
+              {transferSaving ? <Spinner className="w-4 h-4" /> : "Перенести"}
             </button>
           </div>
         </div>
