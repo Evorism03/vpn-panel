@@ -452,13 +452,22 @@ def audit_log(
 
 @router.get("/backup")
 def backup(admin: Admin = Depends(get_current_admin)):
-    """Download a zip archive containing the SQLite DB and AWG config file."""
+    """Download a zip archive containing the SQLite DB, AWG config file, and
+    uploaded release binaries — extracting it into ./data on a new server
+    restores everything the `releases` table refers to (otherwise downloads
+    404 with "File missing on disk" after a migration)."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         if os.path.exists(cfg.db_path):
             zf.write(cfg.db_path, "vpn.db")
         if not cfg.awg_docker_container and os.path.exists(cfg.awg_config_path):
             zf.write(cfg.awg_config_path, "awg0.conf")
+        if os.path.isdir(cfg.releases_dir):
+            for root, _dirs, files in os.walk(cfg.releases_dir):
+                for fname in files:
+                    full = os.path.join(root, fname)
+                    arcname = os.path.join("releases", os.path.relpath(full, cfg.releases_dir))
+                    zf.write(full, arcname)
     buf.seek(0)
     return Response(
         content=buf.read(),
