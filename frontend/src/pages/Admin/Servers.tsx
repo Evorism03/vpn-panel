@@ -80,16 +80,25 @@ export default function Servers() {
     setError(""); setSaving(true);
     try {
       if (modal === "create") {
-        await api.post("/admin/servers", {
+        const res = await api.post("/admin/servers", {
           name: form.name.trim(), base_url: form.base_url.trim(),
           token: form.token.trim(), max_users: form.max_users ?? 0,
         });
+        const created = res.data.server as RemoteServer;
+        // The backend already probed the new server's status before
+        // responding — show it immediately instead of waiting on a second
+        // full list refetch (which re-probes *every* server and can take
+        // a few seconds), that's what made it look like nothing happened.
+        qc.setQueryData<RemoteServer[]>(["servers"], old => [...(old ?? []), created]);
       } else {
-        await api.put(`/admin/servers/${form.id}`, {
+        const res = await api.put(`/admin/servers/${form.id}`, {
           name: form.name?.trim(), base_url: form.base_url?.trim(),
           token: form.token?.trim(), max_users: form.max_users ?? 0,
           is_active: form.is_active,
         });
+        const updated = res.data.server as RemoteServer;
+        qc.setQueryData<RemoteServer[]>(["servers"], old =>
+          old?.map(s => (s.id === updated.id ? updated : s)));
       }
       qc.invalidateQueries({ queryKey: ["servers"] });
       setModal(null);

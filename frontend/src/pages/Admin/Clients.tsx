@@ -64,7 +64,7 @@ function ClientRow({
   onBlock: () => void;
   onUnblock: () => void;
   onEdit: () => void;
-  onTransfer: () => void;
+  onTransfer?: () => void;
   dumpInfo?: { lastHandshake: number; rx: number; tx: number };
   onDragStart: (e: React.MouseEvent) => void;
   onDragEnter: () => void;
@@ -165,10 +165,12 @@ function ClientRow({
             className="p-1.5 rounded-lg text-slate-500 hover:text-green-400 hover:bg-green-500/10 transition-colors">
             <Pencil size={14} />
           </button>
-          <button onClick={onTransfer} title="Перенести на другой сервер"
-            className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
-            <ArrowRightLeft size={14} />
-          </button>
+          {onTransfer && (
+            <button onClick={onTransfer} title="Перенести на другой сервер"
+              className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 transition-colors">
+              <ArrowRightLeft size={14} />
+            </button>
+          )}
           {client.status === "blocked" ? (
             <button onClick={onUnblock} title="Разблокировать"
               className="p-1.5 rounded-lg text-yellow-500 hover:text-green-400 hover:bg-green-500/10 transition-colors">
@@ -366,6 +368,9 @@ function SelectionBar({
 export default function Clients() {
   const qc = useQueryClient();
 
+  // Какой сервер сейчас смотрим — "local" или id удалённого сервера
+  const [activeServer, setActiveServer] = useState<string>("local");
+
   // Поиск
   const [search, setSearch]   = useState("");
   const debouncedSearch       = useDebounce(search, 200);
@@ -411,23 +416,50 @@ export default function Clients() {
   const [offset, setOffset] = useState(0);
   const LIMIT = 200;
 
-  // Сброс пагинации при поиске
-  useEffect(() => { setOffset(0); }, [debouncedSearch]);
+  // Сброс пагинации/выделения при смене поиска или сервера
+  useEffect(() => { setOffset(0); }, [debouncedSearch, activeServer]);
+  useEffect(() => { setSelected(new Set()); setLastClickedIdx(null); }, [activeServer]);
 
-  // Данные
+  // Куда слать запросы для клиентов текущего сервера: локальные — напрямую,
+  // удалённые — через общий прокси главной панели (тот же самый бэкенд на
+  // удалённом узле обслуживает /admin/clients/... один в один).
+  const apiPath = useCallback((suffix: string) =>
+    activeServer === "local"
+      ? `/admin/clients${suffix}`
+      : `/admin/servers/${activeServer}/proxy/admin/clients${suffix}`,
+    [activeServer]);
+
+  // Данные. Локальный сервер поддерживает поиск/пагинацию на бэкенде;
+  // у удалённых своего эндпоинта для этого нет — отдаёт всех клиентов сразу,
+  // поэтому фильтруем и не показываем "Загрузить ещё" на его стороне.
   const { data: rawData, isLoading } = useQuery({
-    queryKey: ["clients", debouncedSearch, offset],
+    queryKey: ["clients", activeServer, debouncedSearch, offset],
     queryFn: async () => {
-      const params: Record<string, string | number> = { limit: LIMIT, offset };
-      if (debouncedSearch) params.search = debouncedSearch;
-      return (await api.get("/admin/clients", { params })).data as { clients: Client[]; total: number };
+      if (activeServer === "local") {
+        const params: Record<string, string | number> = { limit: LIMIT, offset };
+        if (debouncedSearch) params.search = debouncedSearch;
+        return (await api.get("/admin/clients", { params })).data as { clients: Client[]; total: number };
+      }
+      const res = await api.get(`/admin/servers/${activeServer}/clients`);
+      const clients = (res.data.clients ?? []) as Client[];
+      return { clients, total: clients.length };
     },
     staleTime: 15_000,
   });
 
-  const data    = rawData?.clients ?? [];
-  const total   = rawData?.total ?? 0;
-  const hasMore = offset + LIMIT < total;
+  const isLocalView = activeServer === "local";
+  const rawList = rawData?.clients ?? [];
+  const data = isLocalView
+    ? rawList
+    : rawList.filter(c => {
+        if (!debouncedSearch) return true;
+        const q = debouncedSearch.toLowerCase();
+        return (c.name?.toLowerCase().includes(q))
+          || (c.contact?.toLowerCase().includes(q))
+          || (c.id?.toLowerCase().includes(q));
+      });
+  const total   = isLocalView ? (rawData?.total ?? 0) : data.length;
+  const hasMore = isLocalView && offset + LIMIT < total;
 
   const { data: serversData } = useQuery({
     queryKey: ["servers-for-create"],
@@ -453,31 +485,31 @@ export default function Clients() {
 
   const dumpMap = statsData?.dump ? parseDump(statsData.dump) : {};
 
-  // Мутации
+  // Мутации — apiPath() сам решает, локальный эндпоинт или прокси текущего сервера
   const deleteMut = useMutation({
-    mutationFn: (id: string) => api.delete(`/admin/clients/${id}`),
+    mutationFn: (id: string) => api.delete(apiPath(`/${id}`)),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["clients"] }),
   });
 
   const renewMut = useMutation({
     mutationFn: ({ id, term }: { id: string; term: string }) =>
-      api.post(`/admin/clients/${id}/renew`, { term }),
+      api.post(apiPath(`/${id}/renew`), { term }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["clients"] }),
   });
 
   const blockMut = useMutation({
-    mutationFn: (id: string) => api.post(`/admin/clients/${id}/block`),
+    mutationFn: (id: string) => api.post(apiPath(`/${id}/block`)),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["clients"] }),
   });
 
   const unblockMut = useMutation({
-    mutationFn: (id: string) => api.post(`/admin/clients/${id}/unblock`),
+    mutationFn: (id: string) => api.post(apiPath(`/${id}/unblock`)),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["clients"] }),
   });
 
   const updateMut = useMutation({
     mutationFn: ({ id, name, contact }: { id: string; name: string; contact: string }) =>
-      api.patch(`/admin/clients/${id}`, { name, contact }),
+      api.patch(apiPath(`/${id}`), { name, contact }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["clients"] }),
   });
 
@@ -584,7 +616,7 @@ export default function Clients() {
   async function deleteSelected() {
     if (!confirm(`Удалить ${selected.size} клиентов?`)) return;
     for (const id of selected) {
-      await api.delete(`/admin/clients/${id}`);
+      await api.delete(apiPath(`/${id}`));
     }
     qc.invalidateQueries({ queryKey: ["clients"] });
     clearSelection();
@@ -592,14 +624,14 @@ export default function Clients() {
 
   async function renewSelected() {
     for (const id of selected) {
-      await api.post(`/admin/clients/${id}/renew`, { term: "1m" });
+      await api.post(apiPath(`/${id}/renew`), { term: "1m" });
     }
     qc.invalidateQueries({ queryKey: ["clients"] });
     clearSelection();
   }
 
   async function downloadConfig(id: string) {
-    const { data: d } = await api.get(`/admin/clients/${id}/config`);
+    const { data: d } = await api.get(apiPath(`/${id}/config`));
     const blob = new Blob([d.config], { type: "text/plain" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
@@ -632,6 +664,24 @@ export default function Clients() {
     d => d.lastHandshake && (Date.now() - d.lastHandshake * 1000) < 3 * 60_000
   ).length;
 
+  // На локальном сервере счётчики берём из /admin/stats (точнее — считает и
+  // не-загруженные страницы), на удалённом — из уже полученного списка
+  // (отдельного stats-эндпоинта для этого на фронте не задействовано).
+  const statTiles = isLocalView
+    ? [
+        { label: "Активных",      value: statsData?.clients?.active  ?? 0, color: "text-green-400",  bg: "rgba(34,197,94,0.1)",  border: "rgba(34,197,94,0.2)"  },
+        { label: "Истёкших",      value: statsData?.clients?.expired ?? 0, color: "text-red-400",    bg: "rgba(239,68,68,0.1)",  border: "rgba(239,68,68,0.2)"  },
+        { label: "Заблокировано", value: statsData?.clients?.blocked ?? 0, color: "text-orange-400", bg: "rgba(249,115,22,0.1)", border: "rgba(249,115,22,0.2)" },
+        { label: "Онлайн",        value: onlineCount,                      color: "text-blue-400",   bg: "rgba(59,130,246,0.1)", border: "rgba(59,130,246,0.2)" },
+      ]
+    : [
+        { label: "Активных",      value: data.filter(c => c.status === "active").length,  color: "text-green-400",  bg: "rgba(34,197,94,0.1)",  border: "rgba(34,197,94,0.2)"  },
+        { label: "Истёкших",      value: data.filter(c => c.status === "expired").length, color: "text-red-400",    bg: "rgba(239,68,68,0.1)",  border: "rgba(239,68,68,0.2)"  },
+        { label: "Заблокировано", value: data.filter(c => c.status === "blocked").length, color: "text-orange-400", bg: "rgba(249,115,22,0.1)", border: "rgba(249,115,22,0.2)" },
+      ];
+
+  const remoteServers = serversData?.remote ?? [];
+
   return (
     <div className="pb-24">
       {/* Заголовок */}
@@ -645,23 +695,49 @@ export default function Clients() {
         </button>
       </div>
 
-      {/* Мини-статистика */}
-      {statsData && (
-        <div className="flex flex-wrap gap-2 mb-5">
-          {[
-            { label: "Активных",     value: statsData.clients?.active  ?? 0, color: "text-green-400",  bg: "rgba(34,197,94,0.1)",  border: "rgba(34,197,94,0.2)"  },
-            { label: "Истёкших",     value: statsData.clients?.expired ?? 0, color: "text-red-400",    bg: "rgba(239,68,68,0.1)",  border: "rgba(239,68,68,0.2)"  },
-            { label: "Заблокировано",value: statsData.clients?.blocked ?? 0, color: "text-orange-400", bg: "rgba(249,115,22,0.1)", border: "rgba(249,115,22,0.2)" },
-            { label: "Онлайн",       value: onlineCount,                     color: "text-blue-400",   bg: "rgba(59,130,246,0.1)", border: "rgba(59,130,246,0.2)" },
-          ].map(({ label, value, color, bg, border }) => (
-            <div key={label} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs"
-              style={{ background: bg, border: `1px solid ${border}` }}>
-              <span className={`font-bold ${color}`}>{value}</span>
-              <span className="text-slate-500">{label}</span>
-            </div>
-          ))}
+      {/* Переключатель сервера */}
+      {remoteServers.length > 0 && (
+        <div className="flex items-center gap-1.5 mb-4 overflow-x-auto pb-1">
+          <button
+            onClick={() => setActiveServer("local")}
+            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-colors"
+            style={isLocalView
+              ? { background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.35)", color: "#4ade80" }
+              : { background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", color: "#94a3b8" }}
+          >
+            <Server size={12} /> Локальный
+          </button>
+          {remoteServers.map(s => {
+            const active = activeServer === s.id;
+            const dotColor = s.status === "online" ? "bg-green-400"
+              : s.status === "offline" ? "bg-red-400" : "bg-slate-500";
+            return (
+              <button
+                key={s.id}
+                onClick={() => setActiveServer(s.id)}
+                className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-colors"
+                style={active
+                  ? { background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.35)", color: "#4ade80" }
+                  : { background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", color: "#94a3b8" }}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}`} />
+                {s.name}
+              </button>
+            );
+          })}
         </div>
       )}
+
+      {/* Мини-статистика */}
+      <div className="flex flex-wrap gap-2 mb-5">
+        {statTiles.map(({ label, value, color, bg, border }) => (
+          <div key={label} className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs"
+            style={{ background: bg, border: `1px solid ${border}` }}>
+            <span className={`font-bold ${color}`}>{value}</span>
+            <span className="text-slate-500">{label}</span>
+          </div>
+        ))}
+      </div>
 
       {/* Поиск + выбрать все */}
       <div className="flex gap-2 mb-4">
@@ -709,14 +785,14 @@ export default function Clients() {
                 onDragEnter={() => handleCardDragEnter(client.id)}
                 onDownload={() => downloadConfig(client.id)}
                 onQr={async () => {
-                  const { data: d } = await api.get(`/admin/clients/${client.id}/config`);
+                  const { data: d } = await api.get(apiPath(`/${client.id}/config`));
                   setQrData({ config: d.config, name: client.name });
                 }}
                 onRenew={() => renewMut.mutate({ id: client.id, term: "1m" })}
                 onBlock={() => blockMut.mutate(client.id)}
                 onUnblock={() => unblockMut.mutate(client.id)}
                 onEdit={() => openEdit(client)}
-                onTransfer={() => openTransfer(client)}
+                onTransfer={isLocalView ? () => openTransfer(client) : undefined}
                 onDelete={() => {
                   if (confirm(`Удалить ${client.name}?`)) deleteMut.mutate(client.id);
                 }}
