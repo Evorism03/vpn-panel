@@ -160,7 +160,7 @@ print_help() {
   printf "  ${B}Частые переменные окружения${R}  ${DIM}(VAR=значение sudo bash scripts/install.sh)${R}\n"
   printf "    ${CY}%-22s${R} %s\n" "INSTALL_MODE"        "panel | agent — режим установки без вопроса в визарде"
   printf "    ${CY}%-22s${R} %s\n" "DOMAIN"              "Домен для авто-HTTPS через Caddy (по умолчанию — только IP)"
-  printf "    ${CY}%-22s${R} %s\n" "AWG_AUTO_INSTALL"    "yes | no — ставить ли AmneziaWG автоматически"
+  printf "    ${CY}%-22s${R} %s\n" "AWG_AUTO_INSTALL"    "yes | no — ставить ли AmneziaWG автоматически (экспериментально; лучше через клиент AmneziaVPN)"
   printf "    ${CY}%-22s${R} %s\n" "AWG_UDP_PORT"        "UDP-порт AmneziaWG (по умолчанию 51820)"
   printf "    ${CY}%-22s${R} %s\n" "AWG_DOCKER_CONTAINER" "Имя уже существующего AWG-контейнера, если он есть"
   printf "    ${CY}%-22s${R} %s\n" "INSTALL_DIR"         "Куда ставить панель (по умолчанию /opt/vpn-panel)"
@@ -720,9 +720,16 @@ wizard() {
   printf "  ${DIM}│${R}  ${DIM}AmneziaWG${R}\n"
 
   if [ -z "$_awg" ]; then
-    printf "  ${DIM}│${R}  ${B}%-22s${R}  ${DIM}[${CY}%s${DIM}]${R}  " "Установить AWG?" "yes"
-    read -r _ANS; _ANS="${_ANS:-yes}"
+    printf "  ${DIM}│${R}  ${DIM}AWG-контейнер не найден. Рекомендуем развернуть AmneziaWG${R}\n"
+    printf "  ${DIM}│${R}  ${DIM}через официальный клиент AmneziaVPN (правильно ставит AWG 2.0),${R}\n"
+    printf "  ${DIM}│${R}  ${DIM}а затем указать здесь готовый контейнер.${R}\n"
+    printf "  ${DIM}│${R}  ${B}%-22s${R}  ${DIM}[${CY}%s${DIM}]${R}  " "Установить AWG сами?" "no"
+    read -r _ANS; _ANS="${_ANS:-no}"
     case "$_ANS" in y|yes|Y|YES) AWG_AUTO_INSTALL="yes" ;; *) AWG_AUTO_INSTALL="no" ;; esac
+    if [ "$AWG_AUTO_INSTALL" = "yes" ]; then
+      log_warn "Экспериментально: официальный образ AmneziaWG под Docker Hub нестабилен/устарел,"
+      log_warn "автоустановка может не поддержать AWG 2.0 (S3/S4) или не запуститься вовсе."
+    fi
   else
     AWG_AUTO_INSTALL="no"
     log_dim "AWG уже запущен: $_awg"
@@ -784,10 +791,16 @@ wizard() {
 }
 
 # ─── AWG install ──────────────────────────────────────────────────────────────
+# Experimental: no officially documented, actively maintained Docker image
+# bundles both an AmneziaWG 2.0-capable daemon AND the `awg` CLI (genkey/
+# pubkey/show/syncconf) that the rest of this project shells out to. The
+# recommended path is deploying AWG via the official AmneziaVPN client, then
+# pointing this panel at that container (see wizard()'s AWG prompt).
 install_awg() {
   [ "$AWG_AUTO_INSTALL" = "yes" ] || return 0
 
   step "Установка AmneziaWG"
+  log_warn "Экспериментальный режим — см. комментарий install_awg() в install.sh"
   [ "$VERBOSE" = "1" ] && log_dim "Подробный режим: весь вывод команд ниже без скрытия"
 
   local cfg_dir="$AWG_CONFIG_DIR"
