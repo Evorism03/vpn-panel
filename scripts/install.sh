@@ -496,6 +496,9 @@ write_env() {
 
   if [ -f "$env_path" ]; then
     log_info "Existing config preserved"
+    ensure_env_key "$env_path" "PRICE_3D"   "${PRICE_3D:-79}"
+    ensure_env_key "$env_path" "PRICE_7D"   "${PRICE_7D:-129}"
+    ensure_env_key "$env_path" "PRICE_14D"  "${PRICE_14D:-179}"
     ensure_env_key "$env_path" "PRICE_1M"   "${PRICE_1M:-199}"
     ensure_env_key "$env_path" "PRICE_3M"   "${PRICE_3M:-499}"
     ensure_env_key "$env_path" "PRICE_6M"   "${PRICE_6M:-899}"
@@ -507,6 +510,14 @@ write_env() {
     ensure_env_key "$env_path" "WDTT_PASSWORD" ""
     ensure_env_key "$env_path" "DOMAIN"        "${DOMAIN:-}"
     ensure_env_key "$env_path" "AGENT_TOKEN"   "$(gen_secret)"
+    # Backfill for installs from before CADDY_DOMAIN existed — derive it from
+    # whatever DOMAIN is *already in this file* (not the shell var, which is
+    # unset on this update-only path), so Caddy stops choking on an empty
+    # DOMAIN passed through by `env_file: .env` in docker-compose.yml.
+    if ! grep -q '^CADDY_DOMAIN=' "$env_path"; then
+      local _cur_domain; _cur_domain="$(env_value DOMAIN)"
+      ensure_env_key "$env_path" "CADDY_DOMAIN" "${_cur_domain:-localhost}"
+    fi
     sanitize_utf8 "$env_path"
     chmod 600 "$env_path"
     return
@@ -578,6 +589,9 @@ LAVA_SUCCESS_URL=${LAVA_SUCCESS_URL:-$default_panel_url/cabinet}
 LAVA_FAIL_URL=${LAVA_FAIL_URL:-$default_panel_url}
 
 # ── Pricing (RUB) ─────────────────────────────────────────────────────────────
+PRICE_3D=${PRICE_3D:-79}
+PRICE_7D=${PRICE_7D:-129}
+PRICE_14D=${PRICE_14D:-179}
 PRICE_1M=${PRICE_1M:-199}
 PRICE_3M=${PRICE_3M:-499}
 PRICE_6M=${PRICE_6M:-899}
@@ -589,6 +603,9 @@ PANEL_DOMAIN=${PANEL_DOMAIN:-${DOMAIN:-}}
 
 # ── Domain / HTTPS (Caddy) ────────────────────────────────────────────────────
 DOMAIN=${DOMAIN:-}
+# Always non-empty (unlike DOMAIN above) — see comment in ./Caddyfile for why
+# Caddy needs this instead of falling back on an empty DOMAIN by itself.
+CADDY_DOMAIN=${DOMAIN:-localhost}
 
 # ── WDTT ──────────────────────────────────────────────────────────────────────
 WDTT_SERVER=${server_ip}:${WDTT_PORT}
@@ -756,6 +773,9 @@ wizard() {
   printf "  ${DIM}│${R}\n"
   printf "  ${DIM}│${R}  ${DIM}Pricing (RUB)  ·  0 = hide plan${R}\n"
 
+  _prompt "3 days"    "79";   PRICE_3D="$_ANS"
+  _prompt "7 days"    "129";  PRICE_7D="$_ANS"
+  _prompt "14 days"   "179";  PRICE_14D="$_ANS"
   _prompt "1 month"   "199";  PRICE_1M="$_ANS"
   _prompt "3 months"  "499";  PRICE_3M="$_ANS"
   _prompt "6 months"  "899";  PRICE_6M="$_ANS"
@@ -1258,6 +1278,9 @@ DB_PATH=/data/vpn.db
 # ── Agent mode (no shop/lava) ─────────────────────────────────────────────────
 LAVA_API_KEY=
 LAVA_SHOP_ID=
+PRICE_3D=0
+PRICE_7D=0
+PRICE_14D=0
 PRICE_1M=0
 PRICE_3M=0
 PRICE_6M=0

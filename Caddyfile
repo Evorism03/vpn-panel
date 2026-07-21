@@ -1,8 +1,16 @@
 ## Set DOMAIN in .env (e.g. DOMAIN=myvpn.ru) — Caddy automatically obtains and
-## renews a free Let's Encrypt certificate for it. Falls back to "localhost"
-## (no real cert, harmless) if DOMAIN isn't set yet, so Caddy always starts
-## cleanly even before a domain is configured.
-{$DOMAIN:localhost} {
+## renews a free Let's Encrypt certificate for it.
+##
+## Uses CADDY_DOMAIN (derived from DOMAIN by install.sh, always non-empty —
+## "localhost" when no domain is set), NOT `{$DOMAIN:localhost}` directly.
+## Caddy's `:default` placeholder syntax only kicks in when the env var is
+## completely unset — but `env_file: .env` in docker-compose.yml always sets
+## DOMAIN in the container (empty string when unconfigured), which is enough
+## for Caddy to treat it as "set" and skip the default. That turns this line
+## into a bare `{`, which Caddy parses as the *global options* block instead
+## of a site block — and `reverse_proxy` below fails as an unrecognized
+## global option. CADDY_DOMAIN sidesteps this by always being non-empty.
+{$CADDY_DOMAIN:localhost} {
     reverse_proxy frontend:80
 }
 
