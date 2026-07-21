@@ -1401,10 +1401,27 @@ main() {
   select_action
 
   case "$ACTION_MODE" in
-    full_reinstall) wipe_data; wizard ;;
-    reinstall)      rm -f "$INSTALL_DIR/.env"; wizard ;;
-    update)         ;;
-    *)              wizard ;;
+    full_reinstall)
+      # "Start fresh" should also let you switch panel <-> agent, not just
+      # wipe data — otherwise a full reinstall silently keeps whatever mode
+      # was picked the very first time, which is what "start fresh" implies
+      # it shouldn't do.
+      select_install_mode
+      wipe_data
+      if [ "${INSTALL_MODE:-panel}" = "agent" ]; then
+        wizard_agent
+        copy_project
+        write_env_agent
+        start_agent
+        healthcheck_agent
+        print_summary_agent
+        return
+      fi
+      wizard
+      ;;
+    reinstall) rm -f "$INSTALL_DIR/.env"; wizard ;;
+    update)    ;;
+    *)         wizard ;;
   esac
 
   check_ports
