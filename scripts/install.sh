@@ -451,6 +451,7 @@ write_env() {
     ensure_env_key "$env_path" "WDTT_SERVER"   ""
     ensure_env_key "$env_path" "WDTT_PASSWORD" ""
     ensure_env_key "$env_path" "DOMAIN"        "${DOMAIN:-}"
+    ensure_env_key "$env_path" "AGENT_TOKEN"   "$(gen_secret)"
     sanitize_utf8 "$env_path"
     chmod 600 "$env_path"
     return
@@ -480,6 +481,7 @@ write_env() {
 
   local secret_key;     secret_key="$(gen_secret)"
   local admin_password; admin_password="$(gen_secret | cut -c1-20)"
+  local agent_token;    agent_token="$(gen_secret)"
 
   # Caddy serves the panel on 80/443 now — HTTPS via the domain if set,
   # otherwise plain HTTP by IP (see Caddyfile).
@@ -494,6 +496,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES=60
 REFRESH_TOKEN_EXPIRE_DAYS=30
 ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
 ADMIN_PASSWORD=$admin_password
+AGENT_TOKEN=$agent_token
 
 # ── AWG ───────────────────────────────────────────────────────────────────────
 AWG_CONFIG_PATH=${AWG_CONFIG_PATH:-$awg_config_path}
@@ -1077,6 +1080,7 @@ write_env_agent() {
 
   if [ -f "$env_path" ]; then
     log_info "Existing config preserved"
+    ensure_env_key "$env_path" "AGENT_TOKEN" "$(gen_secret)"
     sanitize_utf8 "$env_path"
     chmod 600 "$env_path"
     return
@@ -1103,6 +1107,7 @@ write_env_agent() {
 
   local secret_key; secret_key="$(gen_secret)"
   local admin_password; admin_password="$(gen_secret | cut -c1-20)"
+  local agent_token; agent_token="$(gen_secret)"
 
   cat > "$env_path" <<EOF
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -1111,6 +1116,10 @@ ACCESS_TOKEN_EXPIRE_MINUTES=60
 REFRESH_TOKEN_EXPIRE_DAYS=30
 ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
 ADMIN_PASSWORD=$admin_password
+
+# Static token the main panel uses to authenticate to this agent (paste into
+# Servers → Add server → Token). Unlike an admin JWT it never expires.
+AGENT_TOKEN=$agent_token
 
 # ── AWG ───────────────────────────────────────────────────────────────────────
 AWG_CONFIG_PATH=${AWG_CONFIG_PATH:-$awg_config_path}
@@ -1190,7 +1199,7 @@ healthcheck_agent() {
 
 # ─── Summary agent ────────────────────────────────────────────────────────────
 print_summary_agent() {
-  local token;      token="$(env_value SECRET_KEY)"
+  local token;      token="$(env_value AGENT_TOKEN)"
   local endpoint;   endpoint="$(env_value SERVER_ENDPOINT)"
   local awg_cont;   awg_cont="$(env_value AWG_DOCKER_CONTAINER)"
   local server_ip;  server_ip="$(detect_public_ip)"

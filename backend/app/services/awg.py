@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import ipaddress
+import logging
 import os
 import re
 import secrets
@@ -17,6 +18,7 @@ from fastapi import HTTPException
 from ..config import get_settings
 
 cfg = get_settings()
+log = logging.getLogger(__name__)
 
 # ── Single process-wide lock for AWG config file writes ───────────────────────
 # All writers (create, delete, renew, expire) must hold this lock.
@@ -313,8 +315,12 @@ def _do_reload():
         r = subprocess.run(cmd, input=stripped, text=True, capture_output=True, timeout=5)
         if r.returncode == 0:
             return
+        log.error(
+            "awg syncconf failed (exit %s) on interface %s: %s",
+            r.returncode, cfg.awg_interface, (r.stdout or r.stderr or "").strip(),
+        )
     except Exception:
-        pass
+        log.exception("awg syncconf reload raised an exception")
 
 
 def reload_awg_async():

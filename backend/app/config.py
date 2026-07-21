@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 30
 
+    # Static bearer token for panel→agent calls (this node's own /api/admin/*,
+    # used when this instance is added as a remote "server" on another panel).
+    # Unlike an admin JWT it never expires — set once and paste into
+    # "Servers → Add server → Token" on the main panel.
+    agent_token: str = ""
+
     # First admin bootstrap
     admin_username: str = "admin"
     admin_password: str = "change-me"
