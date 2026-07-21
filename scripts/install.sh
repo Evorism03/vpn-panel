@@ -58,6 +58,17 @@ FORCE_PORT="${FORCE_PORT:-0}"
 ACTION_MODE="${ACTION_MODE:-}"
 INSTALL_MODE="${INSTALL_MODE:-}"   # panel | agent
 
+# --verbose / -v (or VERBOSE=1) — show every command's real output live
+# instead of the spinner, for debugging a step that fails without saying why.
+VERBOSE="${VERBOSE:-0}"
+SHOW_HELP=0
+for _arg in "$@"; do
+  case "$_arg" in
+    --verbose|-v) VERBOSE=1 ;;
+    --help|-h)    SHOW_HELP=1 ;;
+  esac
+done
+
 STEP_N=0
 STEP_TOTAL=7
 _SPIN_PID=''
@@ -138,11 +149,55 @@ banner() {
   printf "  ${BCY}╚══════════════════════════════════════════════════╝${R}\n\n"
 }
 
+print_help() {
+  banner
+  printf "  ${B}Использование${R}\n"
+  printf "    sudo bash scripts/install.sh [флаги]\n\n"
+  printf "  ${B}Флаги${R}\n"
+  printf "    ${CY}%-22s${R} %s\n" "-v, --verbose" "Полный вывод команд вместо спиннера"
+  printf "    ${CY}%-22s${R} %s\n" "-h, --help"    "Показать эту справку и выйти"
+  printf "\n"
+  printf "  ${B}Частые переменные окружения${R}  ${DIM}(VAR=значение sudo bash scripts/install.sh)${R}\n"
+  printf "    ${CY}%-22s${R} %s\n" "INSTALL_MODE"        "panel | agent — режим установки без вопроса в визарде"
+  printf "    ${CY}%-22s${R} %s\n" "DOMAIN"              "Домен для авто-HTTPS через Caddy (по умолчанию — только IP)"
+  printf "    ${CY}%-22s${R} %s\n" "AWG_AUTO_INSTALL"    "yes | no — ставить ли AmneziaWG автоматически"
+  printf "    ${CY}%-22s${R} %s\n" "AWG_UDP_PORT"        "UDP-порт AmneziaWG (по умолчанию 51820)"
+  printf "    ${CY}%-22s${R} %s\n" "AWG_DOCKER_CONTAINER" "Имя уже существующего AWG-контейнера, если он есть"
+  printf "    ${CY}%-22s${R} %s\n" "INSTALL_DIR"         "Куда ставить панель (по умолчанию /opt/vpn-panel)"
+  printf "    ${CY}%-22s${R} %s\n" "INTERACTIVE"         "0 — не задавать вопросы, использовать только defaults/env"
+  printf "    ${CY}%-22s${R} %s\n" "FORCE_PORT"          "1 — не проверять занятость портов 80/443"
+  printf "    ${CY}%-22s${R} %s\n" "SKIP_DOCKER_INSTALL" "1 — не пытаться ставить Docker автоматически"
+  printf "\n"
+  printf "  ${DIM}Полный список переменных — в начале файла scripts/install.sh (секция Defaults).${R}\n\n"
+}
+
 require_root() {
   [ "$(id -u)" -eq 0 ] || fail "Run as root: sudo bash scripts/install.sh"
 }
 
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+# Run a command: with VERBOSE=1 / --verbose, print the description and let
+# the command's real stdout/stderr go straight to the terminal. Otherwise
+# (default) run it behind the spinner and only dump its output if it fails.
+# Exit code is always propagated — use as `run_step "..." cmd ... || fail ...`.
+run_step() {
+  local desc="$1"; shift
+  if [ "$VERBOSE" = "1" ]; then
+    log_info "$desc"
+    if "$@"; then return 0; else return 1; fi
+  fi
+  local _rs_log; _rs_log="$(mktemp)"
+  spin_start "$desc…"
+  if "$@" >"$_rs_log" 2>&1; then
+    spin_stop; rm -f "$_rs_log"; return 0
+  fi
+  spin_stop
+  log_warn "$desc — ошибка, вывод:"
+  cat "$_rs_log" >&2
+  rm -f "$_rs_log"
+  return 1
+}
 
 # ─── Docker ───────────────────────────────────────────────────────────────────
 install_docker_if_missing() {
@@ -733,21 +788,38 @@ install_awg() {
   [ "$AWG_AUTO_INSTALL" = "yes" ] || return 0
 
   step "Установка AmneziaWG"
+  [ "$VERBOSE" = "1" ] && log_dim "Подробный режим: весь вывод команд ниже без скрытия"
 
   local cfg_dir="$AWG_CONFIG_DIR"
   mkdir -p "$cfg_dir"
 
-  # Generate server keys inside a temporary awg container
-  spin_start "Загружаем образ amneziavpn/amneziawg…"
-  docker pull amneziavpn/amneziawg >/dev/null 2>&1
-  spin_stop
+  run_step "Загружаем образ amneziavpn/amneziawg" docker pull amneziavpn/amneziawg \
+    || fail "Не удалось скачать образ amneziavpn/amneziawg — см. вывод выше (сеть? Docker Hub недоступен?)."
   log "Образ загружен"
 
-  spin_start "Генерируем ключи сервера…"
-  local priv_key pub_key
-  priv_key="$(docker run --rm amneziavpn/amneziawg awg genkey 2>/dev/null)"
-  pub_key="$(printf '%s' "$priv_key" | docker run --rm -i amneziavpn/amneziawg awg pubkey 2>/dev/null)"
-  spin_stop
+  # One throwaway container generates both keys (genkey piped straight into
+  # pubkey inside it) instead of spinning up two separate containers for two
+  # near-instant commands — output IS the data we need, so it's always
+  # captured; VERBOSE only changes whether stderr streams live or gets
+  # captured and shown solely on failure.
+  local _awg_log _keys priv_key pub_key
+  local _gen_cmd='p=$(awg genkey) && k=$(printf "%s" "$p" | awg pubkey) && printf "%s\n%s" "$p" "$k"'
+  if [ "$VERBOSE" = "1" ]; then
+    log_info "Генерируем ключи сервера…"
+    _keys="$(docker run --rm amneziavpn/amneziawg sh -c "$_gen_cmd")"
+  else
+    _awg_log="$(mktemp)"
+    spin_start "Генерируем ключи сервера…"
+    _keys="$(docker run --rm amneziavpn/amneziawg sh -c "$_gen_cmd" 2>"$_awg_log")"
+    spin_stop
+  fi
+  priv_key="$(printf '%s\n' "$_keys" | sed -n '1p')"
+  pub_key="$(printf '%s\n' "$_keys" | sed -n '2p')"
+  if [ -z "$priv_key" ] || [ -z "$pub_key" ]; then
+    if [ "$VERBOSE" != "1" ]; then cat "$_awg_log" >&2; rm -f "$_awg_log"; fi
+    fail "Не удалось сгенерировать ключи сервера (awg genkey/pubkey) — см. вывод выше."
+  fi
+  [ "$VERBOSE" = "1" ] || { rm -f "$_awg_log"; log "Ключи сгенерированы"; }
 
   # Random AmneziaWG 2.0 obfuscation params (Jc/Jmin/Jmax junk packets before
   # handshake, S1-S4 padding of handshake/cookie messages, H1-H4 packet magic
@@ -796,8 +868,7 @@ EOF
   # Stop old container if exists
   docker rm -f "$AWG_CONTAINER_NAME" >/dev/null 2>&1 || true
 
-  spin_start "Запускаем контейнер $AWG_CONTAINER_NAME…"
-  docker run -d \
+  run_step "Запускаем контейнер $AWG_CONTAINER_NAME" docker run -d \
     --name "$AWG_CONTAINER_NAME" \
     --restart unless-stopped \
     --cap-add NET_ADMIN \
@@ -806,8 +877,8 @@ EOF
     --device /dev/net/tun \
     -v "$cfg_dir:/opt/amnezia/awg" \
     -p "$AWG_UDP_PORT:$AWG_UDP_PORT/udp" \
-    amneziavpn/amneziawg >/dev/null 2>&1
-  spin_stop
+    amneziavpn/amneziawg \
+    || fail "Не удалось запустить контейнер $AWG_CONTAINER_NAME — см. вывод выше (порт занят? имя конфликтует?)."
 
   # Give the entrypoint a moment to bring the interface up, then verify it
   # actually applied S3/S4 — an image too old to parse AmneziaWG 2.0 fields
@@ -1316,5 +1387,10 @@ main() {
   install_wdtt
   print_summary
 }
+
+if [ "$SHOW_HELP" = "1" ]; then
+  print_help
+  exit 0
+fi
 
 main "$@"
