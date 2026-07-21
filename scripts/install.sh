@@ -749,14 +749,25 @@ install_awg() {
   pub_key="$(printf '%s' "$priv_key" | docker run --rm -i amneziavpn/amneziawg awg pubkey 2>/dev/null)"
   spin_stop
 
-  # Random AmneziaWG obfuscation params
+  # Random AmneziaWG 2.0 obfuscation params (Jc/Jmin/Jmax junk packets before
+  # handshake, S1-S4 padding of handshake/cookie messages, H1-H4 packet magic
+  # headers). Fresh install, so client configs are generated to match — see
+  # build_client_config() in backend/app/services/awg.py, which already
+  # forwards S3/S4 to clients whenever present in this file.
+  # I1-I5 (protocol-mimicry junk packets, e.g. fake QUIC Initial) are
+  # intentionally NOT auto-generated here: they're free-form packet content,
+  # not random numbers, and a wrong/malformed value can break the handshake
+  # entirely. Add them manually later if you want that extra layer — see
+  # https://docs.amnezia.org/documentation/instructions/new-amneziawg-selfhosted/
   rand_int() { shuf -i "${1}-${2}" -n 1 2>/dev/null || awk -v a="$1" -v b="$2" 'BEGIN{srand();print int(a+rand()*(b-a+1))}'; }
-  local Jc Jmin Jmax S1 S2 H1 H2 H3 H4
+  local Jc Jmin Jmax S1 S2 S3 S4 H1 H2 H3 H4
   Jc="$(rand_int 3 10)"
   Jmin="$(rand_int 50 150)"
   Jmax="$(rand_int 200 900)"
   S1="$(rand_int 15 50)"
   S2="$(rand_int 15 50)"
+  S3="$(rand_int 15 50)"
+  S4="$(rand_int 15 50)"
   H1="$(rand_int 1000000 2147483647)"
   H2="$(rand_int 1000000 2147483647)"
   H3="$(rand_int 1000000 2147483647)"
@@ -772,13 +783,15 @@ Jmin = $Jmin
 Jmax = $Jmax
 S1 = $S1
 S2 = $S2
+S3 = $S3
+S4 = $S4
 H1 = $H1
 H2 = $H2
 H3 = $H3
 H4 = $H4
 EOF
   chmod 600 "$cfg_dir/awg0.conf"
-  log "Конфиг создан  ${DIM}→ $cfg_dir/awg0.conf${R}"
+  log "Конфиг создан (AmneziaWG 2.0: Jc/Jmin/Jmax, S1-S4, H1-H4)  ${DIM}→ $cfg_dir/awg0.conf${R}"
 
   # Stop old container if exists
   docker rm -f "$AWG_CONTAINER_NAME" >/dev/null 2>&1 || true
@@ -795,7 +808,26 @@ EOF
     -p "$AWG_UDP_PORT:$AWG_UDP_PORT/udp" \
     amneziavpn/amneziawg >/dev/null 2>&1
   spin_stop
-  log "Контейнер запущен  ${DIM}→ $AWG_CONTAINER_NAME:$AWG_UDP_PORT/udp${R}"
+
+  # Give the entrypoint a moment to bring the interface up, then verify it
+  # actually applied S3/S4 — an image too old to parse AmneziaWG 2.0 fields
+  # would otherwise fail silently here and leave a container that's "running"
+  # but never actually raised awg0, which is much harder to debug later.
+  sleep 2
+  if ! docker ps --format '{{.Names}}' | grep -qx "$AWG_CONTAINER_NAME"; then
+    log_warn "Контейнер $AWG_CONTAINER_NAME не запустился, логи:"
+    docker logs --tail 30 "$AWG_CONTAINER_NAME" >&2 2>&1 || true
+    fail "AmneziaWG контейнер упал сразу после запуска — образ amneziavpn/amneziawg возможно не поддерживает поля S3/S4 (AWG 2.0). Проверьте логи выше."
+  fi
+  local iface_check="${AWG_INTERFACE:-awg0}"
+  if ! docker exec "$AWG_CONTAINER_NAME" awg show "$iface_check" >/dev/null 2>&1; then
+    log_warn "Интерфейс $iface_check не поднялся внутри контейнера — вероятно, установленная версия awg-tools не поддерживает S3/S4."
+    log_warn "Логи контейнера:"
+    docker logs --tail 30 "$AWG_CONTAINER_NAME" >&2 2>&1 || true
+    log_warn "Можно убрать строки S3/S4 из $cfg_dir/awg0.conf и перезапустить: docker restart $AWG_CONTAINER_NAME"
+  else
+    log "Контейнер запущен  ${DIM}→ $AWG_CONTAINER_NAME:$AWG_UDP_PORT/udp${R}"
+  fi
 
   # Update detection cache so write_env picks it up
   _DETECTED_AWG_CONTAINER="$AWG_CONTAINER_NAME"
