@@ -51,7 +51,7 @@ function formatBytes(bytes: number): string {
 function ClientRow({
   client, selected, selectionActive, onSelect, onDownload, onQr, onRenew, onDelete,
   onBlock, onUnblock, onEdit, onTransfer,
-  dumpInfo, onDragStart, onDragEnter,
+  dumpInfo, onDragStart, onDragEnter, serverInfo,
 }: {
   client: Client;
   selected: boolean;
@@ -68,6 +68,7 @@ function ClientRow({
   dumpInfo?: { lastHandshake: number; rx: number; tx: number };
   onDragStart: (e: React.MouseEvent) => void;
   onDragEnter: () => void;
+  serverInfo: { name: string; capacityText: string; forbidden: boolean };
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -261,7 +262,10 @@ function ClientRow({
                 <DetailRow
                   icon={Server}
                   label="Сервер"
-                  value={client.server_id || "local"}
+                  value={`${serverInfo.name} · ${serverInfo.capacityText}`}
+                  suffix={serverInfo.forbidden
+                    ? <X size={11} className="text-red-400 shrink-0" />
+                    : undefined}
                 />
 
                 {/* Трафик */}
@@ -308,9 +312,9 @@ function ClientRow({
   );
 }
 
-function DetailRow({ icon: Icon, label, value, color, mono }: {
+function DetailRow({ icon: Icon, label, value, color, mono, suffix }: {
   icon: any; label: string; value: string;
-  color?: string; mono?: boolean;
+  color?: string; mono?: boolean; suffix?: React.ReactNode;
 }) {
   return (
     <div className="rounded-xl px-3 py-2.5 min-w-0"
@@ -319,8 +323,9 @@ function DetailRow({ icon: Icon, label, value, color, mono }: {
         <Icon size={11} className="text-slate-600 shrink-0" />
         <p className="text-[10px] text-slate-600 uppercase tracking-wide">{label}</p>
       </div>
-      <p className={`text-xs truncate font-medium ${color || "text-slate-300"} ${mono ? "font-mono" : ""}`}>
-        {value}
+      <p className={`text-xs truncate font-medium flex items-center gap-1.5 ${color || "text-slate-300"} ${mono ? "font-mono" : ""}`}>
+        <span className="truncate">{value}</span>
+        {suffix}
       </p>
     </div>
   );
@@ -476,9 +481,18 @@ export default function Clients() {
     staleTime: 30_000,
   });
 
+  // "dump" (last handshake / rx / tx per public key) comes from `awg show`
+  // on whichever node actually runs that peer — /admin/stats only reads the
+  // *local* AWG interface, so viewing a remote server needs its own stats
+  // via the proxy (same response shape, including "dump") or "Последняя
+  // активность" would silently show nothing for every remote client.
   const { data: statsData } = useQuery({
-    queryKey: ["admin-stats"],
-    queryFn: async () => (await api.get("/admin/stats")).data,
+    queryKey: ["admin-stats", activeServer],
+    queryFn: async () => (
+      isLocalView
+        ? await api.get("/admin/stats")
+        : await api.get(`/admin/servers/${activeServer}/stats`)
+    ).data,
     staleTime: 15_000,
     refetchInterval: 30_000,
   });
@@ -682,6 +696,35 @@ export default function Clients() {
 
   const remoteServers = serversData?.remote ?? [];
 
+  // Имя + доступные места текущего сервера — statsData уже подставлена под
+  // activeServer (см. её fetch выше), так что active-count тут всегда верный
+  // и для local, и для remote.
+  const activeCountOnServer = statsData?.clients?.active ?? 0;
+  const currentServerMeta = isLocalView
+    ? {
+        name: serversData?.local?.name || "Локальный сервер",
+        maxUsers: serversData?.local?.max_users ?? 0,
+        forbidden: serversData?.local?.is_forbidden ?? false,
+      }
+    : (() => {
+        const s = remoteServers.find(x => x.id === activeServer);
+        return {
+          name: s?.name ?? activeServer,
+          maxUsers: s?.max_users ?? 0,
+          forbidden: s?.is_forbidden ?? false,
+        };
+      })();
+
+  const currentServerInfo = {
+    name: currentServerMeta.name,
+    forbidden: currentServerMeta.forbidden,
+    capacityText: currentServerMeta.forbidden
+      ? "новые запрещены"
+      : currentServerMeta.maxUsers <= 0
+      ? "мест: ∞"
+      : `свободно ${Math.max(0, currentServerMeta.maxUsers - activeCountOnServer)} из ${currentServerMeta.maxUsers}`,
+  };
+
   return (
     <div className="pb-24">
       {/* Заголовок */}
@@ -781,6 +824,7 @@ export default function Clients() {
                 selectionActive={selected.size > 0}
                 onSelect={e => handleSelect(client.id, i, e)}
                 dumpInfo={dumpMap[client.public_key]}
+                serverInfo={currentServerInfo}
                 onDragStart={e => handleCardDragStart(client.id, e)}
                 onDragEnter={() => handleCardDragEnter(client.id)}
                 onDownload={() => downloadConfig(client.id)}
