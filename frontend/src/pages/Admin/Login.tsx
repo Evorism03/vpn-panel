@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Shield } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Spinner } from "../../components/ui/Spinner";
+import { BrandMark } from "../../components/ui/BrandMark";
 import { api } from "../../api/client";
 import { useAuthStore } from "../../store/auth";
 
@@ -59,7 +59,7 @@ export default function AdminLogin() {
               border: "1px solid rgba(34,197,94,0.3)",
               boxShadow: "0 0 40px -8px rgba(34,197,94,0.3)",
             }}>
-            <Shield size={26} className="text-green-400" />
+            <BrandMark size={30} />
           </div>
           <h1 className="text-lg font-bold text-white tracking-tight">VPN Admin</h1>
           <p className="text-xs text-slate-600 mt-0.5">Панель управления</p>

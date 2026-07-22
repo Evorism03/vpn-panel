@@ -12,6 +12,7 @@ import { useNavigate } from "react-router-dom";
 import { StatusBadge } from "../../components/ui/Badge";
 import { Spinner } from "../../components/ui/Spinner";
 import { QrModal } from "../../components/ui/QrModal";
+import { BrandMark } from "../../components/ui/BrandMark";
 import { PurchaseModal } from "./PurchaseModal";
 import { api } from "../../api/client";
 
@@ -95,7 +96,7 @@ function LoginScreen({ onLogin }: {
           className="relative w-full max-w-sm">
           <div className="flex justify-center mb-6">
             <div className="w-12 h-12 rounded-2xl bg-green-500/15 border border-green-500/30 flex items-center justify-center">
-              <Shield size={22} className="text-green-400" />
+              <BrandMark size={26} />
             </div>
           </div>
           <div className="glass rounded-2xl p-6" style={{ boxShadow: "0 0 40px -8px rgba(34,197,94,0.15)" }}>

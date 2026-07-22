@@ -4,9 +4,10 @@ import { clsx } from "clsx";
 import { useSSE } from "../../hooks/useSSE";
 import {
   LayoutDashboard, Users, ShoppingCart, Settings,
-  LogOut, Shield, Menu, ClipboardList, Server, X, Terminal, Package,
+  LogOut, Menu, ClipboardList, Server, X, Terminal, Package,
 } from "lucide-react";
 import { useAuthStore } from "../../store/auth";
+import { BrandMark } from "../../components/ui/BrandMark";
 
 const NAV = [
   { to: "/admin",           icon: LayoutDashboard, label: "Дашборд",   exact: true },
@@ -51,7 +52,7 @@ export function AdminLayout({ children }: { children: ReactNode }) {
         <div className="flex items-center gap-2.5">
           <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
             style={{ background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.3)" }}>
-            <Shield size={14} className="text-green-400" />
+            <BrandMark size={16} />
           </div>
           <span className="font-semibold text-white text-sm tracking-tight">VPN Admin</span>
         </div>
@@ -159,7 +160,7 @@ export function AdminLayout({ children }: { children: ReactNode }) {
             <Menu size={20} />
           </button>
           <div className="flex items-center gap-2">
-            <Shield size={16} className="text-green-400" />
+            <BrandMark size={18} />
             <span className="text-sm font-medium text-white">VPN Admin</span>
           </div>
         </div>

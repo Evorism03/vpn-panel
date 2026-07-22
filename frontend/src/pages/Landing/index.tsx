@@ -9,6 +9,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import { PurchaseModal } from "../Cabinet/PurchaseModal";
+import { BrandMark } from "../../components/ui/BrandMark";
 
 // ── Latest client release lookup (404 = not published yet, not an error) ───────
 function useLatestRelease(platform: "android" | "windows") {
@@ -89,7 +90,7 @@ function HeroVisual() {
           boxShadow: "0 0 60px -10px rgba(34,197,94,0.4), inset 0 1px 0 rgba(255,255,255,0.1)",
         }}
       >
-        <Shield size={60} className="text-green-400" strokeWidth={1.5} />
+        <BrandMark size={68} />
         {/* Online dot */}
         <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60" />
@@ -332,7 +333,7 @@ export default function Landing() {
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-xl bg-green-500/20 border border-green-500/30
             flex items-center justify-center">
-            <Shield size={15} className="text-green-400" />
+            <BrandMark size={17} />
           </div>
           <span className="font-bold text-white tracking-tight">
             {shopCfg?.panel_name || "VPN Panel"}
@@ -708,7 +709,7 @@ export default function Landing() {
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center
           justify-between gap-4 text-xs text-slate-600">
           <div className="flex items-center gap-2">
-            <Shield size={14} className="text-green-500/60" />
+            <span style={{ opacity: 0.6, display: "inline-flex" }}><BrandMark size={16} /></span>
             <span>{shopCfg?.panel_name || "VPN Panel"} · AmneziaWG</span>
           </div>
           <div className="flex items-center gap-4">
